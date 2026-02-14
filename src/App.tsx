@@ -146,12 +146,15 @@ function App() {
   const [enableMemoryPriority, setEnableMemoryPriority] = useState(false);
   const [autoStartEnabled, setAutoStartEnabled] = useState(false);
   const [rememberChoices, setRememberChoices] = useState(false);
+  const [autoRestrict, setAutoRestrict] = useState(false);
+  const [hasAutoRestricted, setHasAutoRestricted] = useState(false);
   const [showAnnouncements, setShowAnnouncements] = useState(false);
   const [showUpdateDialog, setShowUpdateDialog] = useState(false);
   const [showCloseConfirm, setShowCloseConfirm] = useState(false);
-  const [gameProcesses] = useState<string[]>([]);
 
-  const { announcements, latestVersion, hasUpdate } = useInitialData('0.5.3');
+  const gameProcesses = performance.map(p => p.name);
+
+  const { announcements, latestVersion, hasUpdate } = useInitialData('0.6.0');
 
   const addLog = useCallback((message: string) => {
     const newLog: LogEntry = {
@@ -339,6 +342,21 @@ function App() {
     }
   }, [addLog]);
 
+  const raiseFinalsPriority = useCallback(async () => {
+    try {
+      setLoading(true);
+      addLog('开始提高THE FINALS优先级...');
+      const result = await invoke<string>('raise_finals_priority');
+      addLog('THE FINALS优先级修改完成:');
+      result.split('\n').forEach(line => addLog(line));
+    } catch (error) {
+      addLog(`提高THE FINALS优先级失败: ${error}`);
+      console.error('提高THE FINALS优先级失败:', error);
+    } finally {
+      setLoading(false);
+    }
+  }, [addLog]);
+
   const checkRegistryPriority = useCallback(async () => {
     try {
       setLoading(true);
@@ -389,13 +407,44 @@ function App() {
       if (cached.enableEfficiencyMode !== undefined) setEnableEfficiencyMode(cached.enableEfficiencyMode);
       if (cached.enableIoPriority !== undefined) setEnableIoPriority(cached.enableIoPriority);
       if (cached.enableMemoryPriority !== undefined) setEnableMemoryPriority(cached.enableMemoryPriority);
+      if (cached.autoRestrict !== undefined) setAutoRestrict(cached.autoRestrict);
       setRememberChoices(true);
     }
   }, []);
 
   useEffect(() => {
-    const unlisten = Window.getCurrent().listen('show-close-confirm', () => {
-      setShowCloseConfirm(true);
+    if (!autoRestrict || hasAutoRestricted || !systemInfo?.is_admin) return;
+    
+    const bothFound = performance.some(p => p.name.toLowerCase().includes('sguard64.exe')) &&
+                      performance.some(p => p.name.toLowerCase().includes('sguardsvc64.exe'));
+    
+    if (bothFound) {
+      setHasAutoRestricted(true);
+      addLog('检测到ACE进程，自动执行主动限制...');
+      executeProcessRestriction();
+    }
+  }, [performance, autoRestrict, hasAutoRestricted, systemInfo, addLog, executeProcessRestriction]);
+
+  useEffect(() => {
+    const bothFound = performance.some(p => p.name.toLowerCase().includes('sguard64.exe')) &&
+                      performance.some(p => p.name.toLowerCase().includes('sguardsvc64.exe'));
+    if (!bothFound) {
+      setHasAutoRestricted(false);
+    }
+  }, [performance]);
+
+  useEffect(() => {
+    const unlisten = Window.getCurrent().listen('show-close-confirm', async () => {
+      const cached = storage.getChoices();
+      if (cached.rememberChoices && cached.closeAction) {
+        if (cached.closeAction === 'minimize') {
+          await invoke('show_close_dialog');
+        } else {
+          await invoke('close_application');
+        }
+      } else {
+        setShowCloseConfirm(true);
+      }
     });
 
     return () => {
@@ -446,7 +495,7 @@ function App() {
               />
               <Box>
                 <Typography variant="h5" component="h1" color="primary" sx={{ lineHeight: 1.2 }}>
-                  FuckACE v0.5.3
+                  FuckACE v0.6.0
                 </Typography>
                 <Typography variant="caption" color="text.secondary">
                   小春正在持续监控并限制ACE占用
@@ -500,12 +549,12 @@ function App() {
               <Button
                 variant="outlined"
                 startIcon={<GitHubIcon />}
-                onClick={async () => await openExternalLink('https://afdian.com/a/shshouse')}
+                onClick={async () => await openExternalLink('https://github.com/shshouse/FuckACE')}
                 sx={{ minWidth: 'auto', px: 0.8 }}
                 size="small"
-                title="作者: shshouse"
+                title="Github仓库"
               >
-                投喂作者
+                Github仓库
               </Button>
               <Button
                 variant="outlined"
@@ -539,11 +588,12 @@ function App() {
           </Box>
 
           <Box display="flex" justifyContent="space-between" alignItems="center">
-            <Typography variant="body2">游戏进程:</Typography>
+            <Typography variant="body2" sx={{ whiteSpace: 'nowrap' }}>游戏进程:</Typography>
             <Chip
               label={gameProcesses.length > 0 ? gameProcesses.join(', ') : '未检测到'}
               color={gameProcesses.length > 0 ? 'success' : 'default'}
               size="small"
+              sx={{ maxWidth: '70%' }}
             />
           </Box>
 
@@ -687,7 +737,7 @@ function App() {
                     disabled={loading || !systemInfo?.is_admin}
                     color="success"
                     size="small"
-                    sx={{ py: 0.3, fontSize: '0.7rem' }}
+                    sx={{ py: 0.3, fontSize: '0.7rem', whiteSpace: 'nowrap' }}
                   >
                     三角洲优化
                   </Button>
@@ -697,7 +747,7 @@ function App() {
                     disabled={loading || !systemInfo?.is_admin}
                     color="success"
                     size="small"
-                    sx={{ py: 0.3, fontSize: '0.7rem' }}
+                    sx={{ py: 0.3, fontSize: '0.7rem', whiteSpace: 'nowrap' }}
                   >
                     瓦罗兰特优化
                   </Button>
@@ -707,7 +757,7 @@ function App() {
                     disabled={loading || !systemInfo?.is_admin}
                     color="success"
                     size="small"
-                    sx={{ py: 0.3, fontSize: '0.7rem' }}
+                    sx={{ py: 0.3, fontSize: '0.7rem', whiteSpace: 'nowrap' }}
                   >
                     英雄联盟优化
                   </Button>
@@ -717,9 +767,19 @@ function App() {
                     disabled={loading || !systemInfo?.is_admin}
                     color="success"
                     size="small"
-                    sx={{ py: 0.3, fontSize: '0.7rem' }}
+                    sx={{ py: 0.3, fontSize: '0.7rem', whiteSpace: 'nowrap' }}
                   >
                     暗区突围优化
+                  </Button>
+                  <Button
+                    variant="contained"
+                    onClick={raiseFinalsPriority}
+                    disabled={loading || !systemInfo?.is_admin}
+                    color="success"
+                    size="small"
+                    sx={{ py: 0.3, fontSize: '0.7rem', whiteSpace: 'nowrap' }}
+                  >
+                    最终角逐优化
                   </Button>
                 </Box>
                 <Box display="flex" gap={0.4}>
@@ -839,6 +899,21 @@ function App() {
                   }
                   label={
                     <Typography variant="caption">开机自启动</Typography>
+                  }
+                  sx={{ m: 0 }}
+                />
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={autoRestrict}
+                      onChange={(e) => setAutoRestrict(e.target.checked)}
+                      disabled={isMonitoring}
+                      color="info"
+                      size="small"
+                    />
+                  }
+                  label={
+                    <Typography variant="caption">自动限制（新）</Typography>
                   }
                   sx={{ m: 0 }}
                 />
@@ -977,7 +1052,7 @@ function App() {
                   </Typography>
                 </Alert>
                 <Typography variant="body2" color="text.secondary">
-                  当前版本: v0.5.3
+                  当前版本: v0.6.0
                 </Typography>
               </Box>
             )}
@@ -1021,7 +1096,12 @@ function App() {
               control={
                 <Switch
                   checked={rememberChoices}
-                  onChange={(e) => setRememberChoices(e.target.checked)}
+                  onChange={(e) => {
+                    setRememberChoices(e.target.checked);
+                    if (!e.target.checked) {
+                      storage.clearChoices();
+                    }
+                  }}
                   color="primary"
                   size="small"
                 />
@@ -1049,7 +1129,9 @@ function App() {
                     enableIoPriority,
                     enableMemoryPriority,
                     autoStartEnabled,
-                    rememberChoices: true
+                    autoRestrict,
+                    rememberChoices: true,
+                    closeAction: 'minimize'
                   });
                 }
                 await invoke('show_close_dialog');
@@ -1062,7 +1144,19 @@ function App() {
             </Button>
             <Button
               onClick={async () => {
-                // 彻底退出程序
+                if (rememberChoices) {
+                  storage.saveChoices({
+                    enableCpuAffinity,
+                    enableProcessPriority,
+                    enableEfficiencyMode,
+                    enableIoPriority,
+                    enableMemoryPriority,
+                    autoStartEnabled,
+                    autoRestrict,
+                    rememberChoices: true,
+                    closeAction: 'exit'
+                  });
+                }
                 await invoke('close_application');
               }}
               variant="contained"
