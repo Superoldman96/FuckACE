@@ -19,10 +19,10 @@ export default defineConfig(async () => ({
     host: host || false,
     hmr: host
       ? {
-          protocol: "ws",
-          host,
-          port: 8788,
-        }
+        protocol: "ws",
+        host,
+        port: 8788,
+      }
       : undefined,
     watch: {
       // 3. tell Vite to ignore watching `src-tauri`
@@ -36,7 +36,6 @@ export default defineConfig(async () => ({
         manualChunks: {
           vendor: ['react', 'react-dom'],
           ui: ['@mui/material', '@mui/icons-material'],
-          supabase: ['@supabase/supabase-js'],
         }
       }
     }

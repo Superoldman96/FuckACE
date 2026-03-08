@@ -25,6 +25,5 @@ dist-ssr
 info
 src/utils
 src/hooks
-src/supabaseClient.ts
 
 便携版

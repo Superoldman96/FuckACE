@@ -1,9 +1,13 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { useInitialData } from './hooks/useOptimizedSupabase';
+import { useInitialData } from './services/api';
+import { APP_VERSION } from './constants';
 import { invoke } from '@tauri-apps/api/core';
-import { open } from '@tauri-apps/plugin-shell';
-import { Window } from '@tauri-apps/api/window';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import { storage } from './utils/storage';
+import {
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
+  Legend, ResponsiveContainer
+} from 'recharts';
 import {
   Container,
   Paper,
@@ -27,7 +31,8 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
-  Badge
+  Badge,
+  Snackbar
 } from '@mui/material';
 import {
   PlayArrow as StartIcon,
@@ -40,7 +45,6 @@ import {
   Notifications as NotificationsIcon,
   SystemUpdate as UpdateIcon,
   Close as CloseIcon,
-  Warning as WarningIcon
 } from '@mui/icons-material';
 
 const darkTheme = createTheme({
@@ -127,6 +131,19 @@ interface ProcessPerformance {
   name: string;
   cpu_usage: number;
   memory_mb: number;
+  disk_read_bytes: number;
+  disk_write_bytes: number;
+}
+
+// 历史图表数据点
+interface PerfDataPoint {
+  time: string;
+  sguard_cpu: number | null;
+  sguard_mem: number | null;
+  sguardsvc_cpu: number | null;
+  sguardsvc_mem: number | null;
+  sguard_io: number | null;
+  sguardsvc_io: number | null;
 }
 
 function App() {
@@ -139,22 +156,21 @@ function App() {
   const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null);
   const logContainerRef = useRef<HTMLDivElement>(null);
   const [performance, setPerformance] = useState<ProcessPerformance[]>([]);
+  const [perfHistory, setPerfHistory] = useState<PerfDataPoint[]>([]);
   const [enableCpuAffinity, setEnableCpuAffinity] = useState(true);
   const [enableProcessPriority, setEnableProcessPriority] = useState(true);
   const [enableEfficiencyMode, setEnableEfficiencyMode] = useState(false);
   const [enableIoPriority, setEnableIoPriority] = useState(false);
   const [enableMemoryPriority, setEnableMemoryPriority] = useState(false);
   const [autoStartEnabled, setAutoStartEnabled] = useState(false);
-  const [rememberChoices, setRememberChoices] = useState(false);
   const [autoRestrict, setAutoRestrict] = useState(false);
   const [hasAutoRestricted, setHasAutoRestricted] = useState(false);
   const [showAnnouncements, setShowAnnouncements] = useState(false);
   const [showUpdateDialog, setShowUpdateDialog] = useState(false);
-  const [showCloseConfirm, setShowCloseConfirm] = useState(false);
 
   const gameProcesses = performance.map(p => p.name);
 
-  const { announcements, latestVersion, hasUpdate } = useInitialData('0.6.0');
+  const { announcements, latestVersion, hasUpdate, fetchError } = useInitialData(APP_VERSION);
 
   const addLog = useCallback((message: string) => {
     const newLog: LogEntry = {
@@ -230,10 +246,30 @@ function App() {
     }
   }, [addLog]);
 
+  const MAX_HISTORY = 360;
+
   const fetchPerformance = useCallback(async () => {
     try {
       const perf = await invoke<ProcessPerformance[]>('get_process_performance');
       setPerformance(perf);
+
+      const sguard = perf.find(p => p.name.toLowerCase().includes('sguard64.exe'));
+      const sguardsvc = perf.find(p => p.name.toLowerCase().includes('sguardsvc64.exe'));
+
+      const point: PerfDataPoint = {
+        time: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+        sguard_cpu: sguard ? parseFloat(sguard.cpu_usage.toFixed(1)) : null,
+        sguard_mem: sguard ? parseFloat(sguard.memory_mb.toFixed(1)) : null,
+        sguardsvc_cpu: sguardsvc ? parseFloat(sguardsvc.cpu_usage.toFixed(1)) : null,
+        sguardsvc_mem: sguardsvc ? parseFloat(sguardsvc.memory_mb.toFixed(1)) : null,
+        sguard_io: sguard ? parseFloat(((sguard.disk_read_bytes + sguard.disk_write_bytes) / 1024 / 5).toFixed(1)) : null,
+        sguardsvc_io: sguardsvc ? parseFloat(((sguardsvc.disk_read_bytes + sguardsvc.disk_write_bytes) / 1024 / 5).toFixed(1)) : null,
+      };
+
+      setPerfHistory(prev => {
+        const next = [...prev, point];
+        return next.length > MAX_HISTORY ? next.slice(next.length - MAX_HISTORY) : next;
+      });
     } catch (error) {
       console.error('获取性能数据失败:', error);
     }
@@ -357,6 +393,21 @@ function App() {
     }
   }, [addLog]);
 
+  const raiseNzfuturePriority = useCallback(async () => {
+    try {
+      setLoading(true);
+      addLog('开始提高逆战未来优先级...');
+      const result = await invoke<string>('raise_nzfuture_priority');
+      addLog('逆战未来优先级修改完成:');
+      result.split('\n').forEach(line => addLog(line));
+    } catch (error) {
+      addLog(`提高逆战未来优先级失败: ${error}`);
+      console.error('提高逆战未来优先级失败:', error);
+    } finally {
+      setLoading(false);
+    }
+  }, [addLog]);
+
   const checkRegistryPriority = useCallback(async () => {
     try {
       setLoading(true);
@@ -408,16 +459,27 @@ function App() {
       if (cached.enableIoPriority !== undefined) setEnableIoPriority(cached.enableIoPriority);
       if (cached.enableMemoryPriority !== undefined) setEnableMemoryPriority(cached.enableMemoryPriority);
       if (cached.autoRestrict !== undefined) setAutoRestrict(cached.autoRestrict);
-      setRememberChoices(true);
     }
   }, []);
 
   useEffect(() => {
+    storage.saveChoices({
+      enableCpuAffinity,
+      enableProcessPriority,
+      enableEfficiencyMode,
+      enableIoPriority,
+      enableMemoryPriority,
+      autoRestrict,
+      rememberChoices: true,
+    });
+  }, [enableCpuAffinity, enableProcessPriority, enableEfficiencyMode, enableIoPriority, enableMemoryPriority, autoRestrict]);
+
+  useEffect(() => {
     if (!autoRestrict || hasAutoRestricted || !systemInfo?.is_admin) return;
-    
+
     const bothFound = performance.some(p => p.name.toLowerCase().includes('sguard64.exe')) &&
-                      performance.some(p => p.name.toLowerCase().includes('sguardsvc64.exe'));
-    
+      performance.some(p => p.name.toLowerCase().includes('sguardsvc64.exe'));
+
     if (bothFound) {
       setHasAutoRestricted(true);
       addLog('检测到ACE进程，自动执行主动限制...');
@@ -427,30 +489,13 @@ function App() {
 
   useEffect(() => {
     const bothFound = performance.some(p => p.name.toLowerCase().includes('sguard64.exe')) &&
-                      performance.some(p => p.name.toLowerCase().includes('sguardsvc64.exe'));
+      performance.some(p => p.name.toLowerCase().includes('sguardsvc64.exe'));
     if (!bothFound) {
       setHasAutoRestricted(false);
     }
   }, [performance]);
 
-  useEffect(() => {
-    const unlisten = Window.getCurrent().listen('show-close-confirm', async () => {
-      const cached = storage.getChoices();
-      if (cached.rememberChoices && cached.closeAction) {
-        if (cached.closeAction === 'minimize') {
-          await invoke('show_close_dialog');
-        } else {
-          await invoke('close_application');
-        }
-      } else {
-        setShowCloseConfirm(true);
-      }
-    });
 
-    return () => {
-      unlisten.then((fn: () => void) => fn());
-    };
-  }, []);
 
   useEffect(() => {
     if (hasUpdate) {
@@ -474,10 +519,16 @@ function App() {
 
   const openExternalLink = async (url: string) => {
     try {
-      await open(url);
+      await openUrl(url);
     } catch (error) {
-      console.error('打开链接失败:', error);
-      window.open(url, '_blank', 'noopener,noreferrer');
+      console.error('opener插件打开链接失败:', error);
+      try {
+        const { open: shellOpen } = await import('@tauri-apps/plugin-shell');
+        await shellOpen(url);
+      } catch (shellError) {
+        console.error('shell插件打开链接失败:', shellError);
+        window.open(url, '_blank', 'noopener,noreferrer');
+      }
     }
   };
 
@@ -495,7 +546,7 @@ function App() {
               />
               <Box>
                 <Typography variant="h5" component="h1" color="primary" sx={{ lineHeight: 1.2 }}>
-                  FuckACE v0.6.0
+                  FuckACE v{APP_VERSION}
                 </Typography>
                 <Typography variant="caption" color="text.secondary">
                   小春正在持续监控并限制ACE占用
@@ -552,7 +603,7 @@ function App() {
                 onClick={async () => await openExternalLink('https://github.com/shshouse/FuckACE')}
                 sx={{ minWidth: 'auto', px: 0.8 }}
                 size="small"
-                title="Github仓库"
+                title="欢迎star！＞﹏＜"
               >
                 Github仓库
               </Button>
@@ -577,28 +628,28 @@ function App() {
               <Box display="flex" flexDirection="column" gap={0.8} sx={{ maxHeight: 150, overflow: 'hidden' }}>
 
 
-          <Box display="flex" justifyContent="space-between" alignItems="center">
-            <Typography variant="body2">目标核心:</Typography>
-            <Chip
-              label={targetCore !== null ? `核心 ${targetCore}` : '检测中...'}
-              color="info"
-              variant="outlined"
-              size="small"
-            />
-          </Box>
+                <Box display="flex" justifyContent="space-between" alignItems="center">
+                  <Typography variant="body2">目标核心:</Typography>
+                  <Chip
+                    label={targetCore !== null ? `核心 ${targetCore}` : '检测中...'}
+                    color="info"
+                    variant="outlined"
+                    size="small"
+                  />
+                </Box>
 
-          <Box display="flex" justifyContent="space-between" alignItems="center">
-            <Typography variant="body2" sx={{ whiteSpace: 'nowrap' }}>游戏进程:</Typography>
-            <Chip
-              label={gameProcesses.length > 0 ? gameProcesses.join(', ') : '未检测到'}
-              color={gameProcesses.length > 0 ? 'success' : 'default'}
-              size="small"
-              sx={{ maxWidth: '70%' }}
-            />
-          </Box>
+                <Box display="flex" justifyContent="space-between" alignItems="center">
+                  <Typography variant="body2" sx={{ whiteSpace: 'nowrap' }}>目标进程:</Typography>
+                  <Chip
+                    label={gameProcesses.length > 0 ? gameProcesses.join(', ') : '未检测到'}
+                    color={gameProcesses.length > 0 ? 'success' : 'default'}
+                    size="small"
+                    sx={{ maxWidth: '70%' }}
+                  />
+                </Box>
 
-          {loading && <LinearProgress sx={{ mt: 1 }} />}
-        </Box>
+                {loading && <LinearProgress sx={{ mt: 1 }} />}
+              </Box>
             </Paper>
 
             <Paper elevation={2} sx={{ p: 1.5, flex: 1, minWidth: 0, maxWidth: '100%' }}>
@@ -669,50 +720,76 @@ function App() {
           </Box>
 
           <Box display="flex" gap={1}>
-            <Paper elevation={2} sx={{ p: 1.5, flex: 1, minWidth: 0, maxWidth: '100%' }}>
-              <Typography variant="subtitle1" gutterBottom sx={{ mb: 1, fontWeight: 600 }}>性能监控</Typography>
-              {performance.length > 0 ? (
-                <List dense sx={{ maxHeight: 180, overflowY: 'auto' }}>
-                  {performance.map((proc) => (
-                    <Box key={proc.pid}>
-                      <ListItem sx={{ py: 1 }}>
-                        <ListItemText
-                          primary={
-                            <Box display="flex" justifyContent="space-between" alignItems="center">
-                              <Typography variant="body2" fontWeight="500">
-                                {proc.name} (PID: {proc.pid})
-                              </Typography>
-                              <Chip
-                                label={`CPU: ${proc.cpu_usage.toFixed(1)}%`}
-                                size="small"
-                                color={proc.cpu_usage > 10 ? 'error' : proc.cpu_usage > 5 ? 'warning' : 'success'}
-                              />
-                            </Box>
-                          }
-                          secondary={
-                            <Box mt={0.5}>
-                              <Typography variant="caption" display="block">
-                                内存: {proc.memory_mb.toFixed(2)} MB
-                              </Typography>
-                              <LinearProgress
-                                variant="determinate"
-                                value={Math.min(proc.cpu_usage, 100)}
-                                sx={{ mt: 0.5, height: 6, borderRadius: 1 }}
-                                color={proc.cpu_usage > 10 ? 'error' : proc.cpu_usage > 5 ? 'warning' : 'success'}
-                              />
-                            </Box>
-                          }
-                        />
-                      </ListItem>
-                      <Divider />
-                    </Box>
-                  ))}
-                </List>
-              ) : (
-                <Typography variant="body2" color="text.secondary">
-                  未检测到目标进程
-                </Typography>
-              )}
+            <Paper elevation={2} sx={{ p: 1.5, flex: 2, minWidth: 0, maxWidth: '100%' }}>
+              <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 0.5 }}>性能监控</Typography>
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                {/* CPU 图表 */}
+                <Typography variant="caption" color="text.secondary" sx={{ pl: 0.5 }}>CPU 占用 (%)</Typography>
+                <ResponsiveContainer width="100%" height={90}>
+                  <LineChart data={perfHistory} margin={{ top: 2, right: 8, left: -20, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
+                    <XAxis dataKey="time" tick={{ fontSize: 9 }} interval="preserveStartEnd" />
+                    <YAxis tick={{ fontSize: 9 }} domain={[0, 'auto']} unit="%" />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: '#1e1e1e', border: '1px solid #444', fontSize: 11 }}
+                      formatter={(v: unknown) => [`${v}%`]}
+                    />
+                    <Legend wrapperStyle={{ fontSize: 10 }} />
+                    <Line
+                      type="monotone" dataKey="sguard_cpu" name="SGuard64"
+                      stroke="#f44336" dot={false} strokeWidth={1.5} connectNulls
+                    />
+                    <Line
+                      type="monotone" dataKey="sguardsvc_cpu" name="SGuardSvc64"
+                      stroke="#ff9800" dot={false} strokeWidth={1.5} connectNulls
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+                {/* 内存图表 */}
+                <Typography variant="caption" color="text.secondary" sx={{ pl: 0.5 }}>内存占用 (MB)</Typography>
+                <ResponsiveContainer width="100%" height={90}>
+                  <LineChart data={perfHistory} margin={{ top: 2, right: 8, left: -20, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
+                    <XAxis dataKey="time" tick={{ fontSize: 9 }} interval="preserveStartEnd" />
+                    <YAxis tick={{ fontSize: 9 }} domain={[0, 'auto']} unit="MB" />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: '#1e1e1e', border: '1px solid #444', fontSize: 11 }}
+                      formatter={(v: unknown) => [`${v} MB`]}
+                    />
+                    <Legend wrapperStyle={{ fontSize: 10 }} />
+                    <Line
+                      type="monotone" dataKey="sguard_mem" name="SGuard64"
+                      stroke="#90caf9" dot={false} strokeWidth={1.5} connectNulls
+                    />
+                    <Line
+                      type="monotone" dataKey="sguardsvc_mem" name="SGuardSvc64"
+                      stroke="#81c784" dot={false} strokeWidth={1.5} connectNulls
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+                {/* I/O 图表 */}
+                <Typography variant="caption" color="text.secondary" sx={{ pl: 0.5 }}>磁盘 I/O (KB/s)</Typography>
+                <ResponsiveContainer width="100%" height={90}>
+                  <LineChart data={perfHistory} margin={{ top: 2, right: 8, left: -20, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
+                    <XAxis dataKey="time" tick={{ fontSize: 9 }} interval="preserveStartEnd" />
+                    <YAxis tick={{ fontSize: 9 }} domain={[0, 'auto']} unit="KB" />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: '#1e1e1e', border: '1px solid #444', fontSize: 11 }}
+                      formatter={(v: unknown) => [`${v} KB/s`]}
+                    />
+                    <Legend wrapperStyle={{ fontSize: 10 }} />
+                    <Line
+                      type="monotone" dataKey="sguard_io" name="SGuard64"
+                      stroke="#ce93d8" dot={false} strokeWidth={1.5} connectNulls
+                    />
+                    <Line
+                      type="monotone" dataKey="sguardsvc_io" name="SGuardSvc64"
+                      stroke="#ffcc80" dot={false} strokeWidth={1.5} connectNulls
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </Box>
             </Paper>
 
             <Paper elevation={2} sx={{ p: 1.5, flex: 1, minWidth: 0, maxWidth: '100%', display: 'flex', flexDirection: 'column' }}
@@ -779,7 +856,17 @@ function App() {
                     size="small"
                     sx={{ py: 0.3, fontSize: '0.7rem', whiteSpace: 'nowrap' }}
                   >
-                    最终角逐优化
+                    终极角逐优化
+                  </Button>
+                  <Button
+                    variant="contained"
+                    onClick={raiseNzfuturePriority}
+                    disabled={loading || !systemInfo?.is_admin}
+                    color="success"
+                    size="small"
+                    sx={{ py: 0.3, fontSize: '0.7rem', whiteSpace: 'nowrap' }}
+                  >
+                    逆战未来优化
                   </Button>
                 </Box>
                 <Box display="flex" gap={0.4}>
@@ -1052,7 +1139,7 @@ function App() {
                   </Typography>
                 </Alert>
                 <Typography variant="body2" color="text.secondary">
-                  当前版本: v0.6.0
+                  当前版本: v{APP_VERSION}
                 </Typography>
               </Box>
             )}
@@ -1073,99 +1160,16 @@ function App() {
           </DialogActions>
         </Dialog>
 
-        <Dialog
-          open={showCloseConfirm}
-          onClose={() => setShowCloseConfirm(false)}
-          maxWidth="xs"
-          fullWidth
+
+        <Snackbar
+          open={fetchError}
+          autoHideDuration={6000}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
         >
-          <DialogTitle>
-            <Box display="flex" alignItems="center" gap={1}>
-              <WarningIcon color="warning" />
-              <Typography variant="h6">确认关闭</Typography>
-            </Box>
-          </DialogTitle>
-          <DialogContent>
-            <Typography variant="body1" sx={{ mt: 1 }}>
-              您确定要关闭应用程序吗？
-            </Typography>
-            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-              选择"最小化到托盘"将保持程序在后台运行，选择"彻底退出"将关闭程序。
-            </Typography>
-            <FormControlLabel
-              control={
-                <Switch
-                  checked={rememberChoices}
-                  onChange={(e) => {
-                    setRememberChoices(e.target.checked);
-                    if (!e.target.checked) {
-                      storage.clearChoices();
-                    }
-                  }}
-                  color="primary"
-                  size="small"
-                />
-              }
-              label={
-                <Typography variant="body2">记住选择</Typography>
-              }
-              sx={{ mt: 2 }}
-            />
-          </DialogContent>
-          <DialogActions>
-            <Button
-              onClick={() => setShowCloseConfirm(false)}
-              color="inherit"
-            >
-              取消
-            </Button>
-            <Button
-              onClick={async () => {
-                if (rememberChoices) {
-                  storage.saveChoices({
-                    enableCpuAffinity,
-                    enableProcessPriority,
-                    enableEfficiencyMode,
-                    enableIoPriority,
-                    enableMemoryPriority,
-                    autoStartEnabled,
-                    autoRestrict,
-                    rememberChoices: true,
-                    closeAction: 'minimize'
-                  });
-                }
-                await invoke('show_close_dialog');
-                setShowCloseConfirm(false);
-              }}
-              variant="outlined"
-              color="primary"
-            >
-              最小化到托盘
-            </Button>
-            <Button
-              onClick={async () => {
-                if (rememberChoices) {
-                  storage.saveChoices({
-                    enableCpuAffinity,
-                    enableProcessPriority,
-                    enableEfficiencyMode,
-                    enableIoPriority,
-                    enableMemoryPriority,
-                    autoStartEnabled,
-                    autoRestrict,
-                    rememberChoices: true,
-                    closeAction: 'exit'
-                  });
-                }
-                await invoke('close_application');
-              }}
-              variant="contained"
-              color="error"
-            >
-              彻底退出
-            </Button>
-          </DialogActions>
-        </Dialog>
+          <Alert severity="warning" variant="filled" sx={{ width: '100%' }}>
+            无法获取更新，请检查网络/(ㄒoㄒ)/~~
+          </Alert>
+        </Snackbar>
       </Container>
     </ThemeProvider>
   );

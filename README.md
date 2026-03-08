@@ -3,7 +3,7 @@
 ### 喜欢的话请点点star，谢谢！Ciallo～(∠・ω<)⌒☆
 
 最新版本下载（github的一般会延后发布）：
-- [前往MikuGame下载最新版本](https://www.mikugame.icu/modpacks)
+- [下载最新版本](https://www.mikugame.icu/modpacks)
   
 相关使用教程请看B站视频：
 - [FuckACE使用教程](https://www.bilibili.com/video/BV1ePCnBpEWp/)
@@ -13,9 +13,13 @@
 
 <img width="1343" height="948" alt="image" src="https://github.com/user-attachments/assets/06baae6b-16b6-4e9a-8ff8-5f2e6c3a93c0" />
 
-注意：<br>
-1.软件不会彻底关闭ACE，只是对其占用进行限制，别开桂嗷。<br>
-2.主包测试了是没事的，但是不排除会误封的可能，请充分了解潜在风险，使用即代表已经了解并接受这些风险/(ㄒoㄒ)/~~
+## 注意事项：
+### 1.对于ACE
+- FuckACE不会关闭ACE，只是对其占用进行限制，别开挂嗷。
+### 2.会不会封号
+- FuckACE虽然名字很糙，但是并不会做出任何修改游戏文件、读写游戏内存等任何危害游戏本体的行为，对ACE进程的限制也仅限于调整ACE进程的系统资源分配属性，以及通过Windows注册表预设进程优先级，但是TX是自由的，在使用时请低调，不要跳脸官方。
+- 主包测试是没事的，但是不排除会误封的可能，请充分了解潜在风险，使用即代表已经了解并接受这些风险/(ㄒoㄒ)/~~
+
 
 ## 核心机制
 ### 1.被动限制：

@@ -1,8 +1,8 @@
 [package]
 name = "FuckACE"
-version = "0.6.0"
-description = "A Tauri App"
-authors = ["you"]
+version = "0.7.0"
+description = "FuckACE是一个用来优化ACE游戏的免安装开源工具"
+authors = ["shshouse"]
 edition = "2021"
 
 [package.metadata.windows.manifest]
@@ -31,4 +31,5 @@ sysinfo = "0.30"
 windows = { version = "0.58", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp", "Win32_System_SystemInformation", "Win32_Security"] }
 tokio = { version = "1", features = ["full"] }
 winreg = "0.52"
+tauri-plugin-single-instance = "2.4.0"
 
