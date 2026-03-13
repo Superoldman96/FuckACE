@@ -3,7 +3,7 @@
 ### 喜欢的话请点点star，谢谢！Ciallo～(∠・ω<)⌒☆
 
 最新版本下载（github的一般会延后发布）：
-- [下载最新版本](https://www.mikugame.icu/modpacks)
+- [下载最新版本](https://mikugame.icu/modpacks)
   
 相关使用教程请看B站视频：
 - [FuckACE使用教程](https://www.bilibili.com/video/BV1ePCnBpEWp/)
@@ -37,8 +37,26 @@
 
 ## 开发者
 - 开发者: [shshouse](https://github.com/shshouse)
-- Bilibili: [shshouse](https://space.bilibili.com/3493127123897196)
-- 爱发电: [shshouse](https://afdian.com/a/shshouse)
+- Bilibili: [松灰酸的猫](https://space.bilibili.com/3493127123897196)
+- 爱发电: [松灰酸](https://afdian.com/a/shshouse)
 
 ## 免责声明
-本软件仅供技术研究和学习使用，使用本软件造成的任何后果由使用者自行承担。
+
+本软件（FuckACE）是一个开源的系统资源调度优化工具，基于 GPLv3 协议发布。在使用前请仔细阅读以下声明：
+
+### 软件性质
+- 本软件**不是**游戏作弊工具、外挂或辅助程序。
+- 本软件不会读写游戏内存、不会修改游戏文件、不会注入 DLL、不会 Hook 任何游戏函数。
+- 本软件所有操作均通过 Windows 公开系统 API（如 SetProcessAffinityMask、SetPriorityClass、SetProcessInformation 等）和 Windows 注册表（Image File Execution Options）实现，与系统自带的任务管理器调整进程优先级和 CPU 亲和性的原理一致。
+- 本软件完全开源，源代码公开透明，不含任何后门，不收集任何用户数据。
+
+### 风险告知
+- 使用本软件调整反作弊进程的系统资源分配**可能违反**相关游戏的用户协议（EULA）。
+- 虽然经主包测试暂未封号，但**不排除**因使用本软件导致游戏账号被封禁的可能性。
+- 使用本软件即表示您已充分了解并自愿接受上述风险。
+
+### 责任免除
+- 本软件仅供技术研究和学习交流使用。
+- 因使用本软件造成的任何直接或间接后果（包括但不限于游戏账号封禁、系统异常等），均由使用者自行承担，与开发者无关。
+- 开发者不对本软件的适用性、安全性或可靠性作任何明示或暗示的担保。
+- 任何人不得将本软件用于违反法律法规的用途。

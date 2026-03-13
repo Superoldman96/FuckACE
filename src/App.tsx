@@ -721,11 +721,11 @@ function App() {
 
           <Box display="flex" gap={1}>
             <Paper elevation={2} sx={{ p: 1.5, flex: 2, minWidth: 0, maxWidth: '100%' }}>
-              <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 0.5 }}>性能监控</Typography>
-              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+              <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 0.5 }}>实时监控</Typography>
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.3 }}>
                 {/* CPU 图表 */}
-                <Typography variant="caption" color="text.secondary" sx={{ pl: 0.5 }}>CPU 占用 (%)</Typography>
-                <ResponsiveContainer width="100%" height={90}>
+                <Typography variant="caption" color="text.secondary" sx={{ pl: 0.5, lineHeight: 1.2 }}>CPU (%)</Typography>
+                <ResponsiveContainer width="100%" height={65}>
                   <LineChart data={perfHistory} margin={{ top: 2, right: 8, left: -20, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
                     <XAxis dataKey="time" tick={{ fontSize: 9 }} interval="preserveStartEnd" />
@@ -734,7 +734,6 @@ function App() {
                       contentStyle={{ backgroundColor: '#1e1e1e', border: '1px solid #444', fontSize: 11 }}
                       formatter={(v: unknown) => [`${v}%`]}
                     />
-                    <Legend wrapperStyle={{ fontSize: 10 }} />
                     <Line
                       type="monotone" dataKey="sguard_cpu" name="SGuard64"
                       stroke="#f44336" dot={false} strokeWidth={1.5} connectNulls
@@ -746,8 +745,8 @@ function App() {
                   </LineChart>
                 </ResponsiveContainer>
                 {/* 内存图表 */}
-                <Typography variant="caption" color="text.secondary" sx={{ pl: 0.5 }}>内存占用 (MB)</Typography>
-                <ResponsiveContainer width="100%" height={90}>
+                <Typography variant="caption" color="text.secondary" sx={{ pl: 0.5, lineHeight: 1.2 }}>内存 (MB)</Typography>
+                <ResponsiveContainer width="100%" height={65}>
                   <LineChart data={perfHistory} margin={{ top: 2, right: 8, left: -20, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
                     <XAxis dataKey="time" tick={{ fontSize: 9 }} interval="preserveStartEnd" />
@@ -756,20 +755,20 @@ function App() {
                       contentStyle={{ backgroundColor: '#1e1e1e', border: '1px solid #444', fontSize: 11 }}
                       formatter={(v: unknown) => [`${v} MB`]}
                     />
-                    <Legend wrapperStyle={{ fontSize: 10 }} />
+
                     <Line
                       type="monotone" dataKey="sguard_mem" name="SGuard64"
-                      stroke="#90caf9" dot={false} strokeWidth={1.5} connectNulls
+                      stroke="#f44336" dot={false} strokeWidth={1.5} connectNulls
                     />
                     <Line
                       type="monotone" dataKey="sguardsvc_mem" name="SGuardSvc64"
-                      stroke="#81c784" dot={false} strokeWidth={1.5} connectNulls
+                      stroke="#ff9800" dot={false} strokeWidth={1.5} connectNulls
                     />
                   </LineChart>
                 </ResponsiveContainer>
                 {/* I/O 图表 */}
-                <Typography variant="caption" color="text.secondary" sx={{ pl: 0.5 }}>磁盘 I/O (KB/s)</Typography>
-                <ResponsiveContainer width="100%" height={90}>
+                <Typography variant="caption" color="text.secondary" sx={{ pl: 0.5, lineHeight: 1.2 }}>I/O (KB/s)</Typography>
+                <ResponsiveContainer width="100%" height={65}>
                   <LineChart data={perfHistory} margin={{ top: 2, right: 8, left: -20, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
                     <XAxis dataKey="time" tick={{ fontSize: 9 }} interval="preserveStartEnd" />
@@ -778,14 +777,15 @@ function App() {
                       contentStyle={{ backgroundColor: '#1e1e1e', border: '1px solid #444', fontSize: 11 }}
                       formatter={(v: unknown) => [`${v} KB/s`]}
                     />
-                    <Legend wrapperStyle={{ fontSize: 10 }} />
+                    <Legend wrapperStyle={{ fontSize: 10, lineHeight: '14px' }} />
+
                     <Line
                       type="monotone" dataKey="sguard_io" name="SGuard64"
-                      stroke="#ce93d8" dot={false} strokeWidth={1.5} connectNulls
+                      stroke="#f44336" dot={false} strokeWidth={1.5} connectNulls
                     />
                     <Line
                       type="monotone" dataKey="sguardsvc_io" name="SGuardSvc64"
-                      stroke="#ffcc80" dot={false} strokeWidth={1.5} connectNulls
+                      stroke="#ff9800" dot={false} strokeWidth={1.5} connectNulls
                     />
                   </LineChart>
                 </ResponsiveContainer>
