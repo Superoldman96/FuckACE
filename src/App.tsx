@@ -39,12 +39,11 @@ import {
   CheckCircle,
   DarkMode as DarkModeIcon,
   LightMode as LightModeIcon,
-  SportsEsports as GameIcon,
-  Extension as ModIcon,
   GitHub as GitHubIcon,
   Notifications as NotificationsIcon,
   SystemUpdate as UpdateIcon,
   Close as CloseIcon,
+  SaveAlt as SaveIcon,
 } from '@mui/icons-material';
 
 const darkTheme = createTheme({
@@ -167,6 +166,7 @@ function App() {
   const [hasAutoRestricted, setHasAutoRestricted] = useState(false);
   const [showAnnouncements, setShowAnnouncements] = useState(false);
   const [showUpdateDialog, setShowUpdateDialog] = useState(false);
+  const [exportingReport, setExportingReport] = useState(false);
 
   const gameProcesses = performance.map(p => p.name);
 
@@ -246,7 +246,8 @@ function App() {
     }
   }, [addLog]);
 
-  const MAX_HISTORY = 360;
+  const DISPLAY_POINTS = 360;
+  const displayedHistory = perfHistory.slice(-DISPLAY_POINTS);
 
   const fetchPerformance = useCallback(async () => {
     try {
@@ -267,8 +268,8 @@ function App() {
       };
 
       setPerfHistory(prev => {
-        const next = [...prev, point];
-        return next.length > MAX_HISTORY ? next.slice(next.length - MAX_HISTORY) : next;
+        const newHistory = [...prev, point];
+        return newHistory.length > DISPLAY_POINTS ? newHistory.slice(-DISPLAY_POINTS) : newHistory;
       });
     } catch (error) {
       console.error('获取性能数据失败:', error);
@@ -408,6 +409,36 @@ function App() {
     }
   }, [addLog]);
 
+  const raiseCrossfirePriority = useCallback(async () => {
+    try {
+      setLoading(true);
+      addLog('开始提高穿越火线优先级...');
+      const result = await invoke<string>('raise_crossfire_priority');
+      addLog('穿越火线优先级修改完成:');
+      result.split('\n').forEach(line => addLog(line));
+    } catch (error) {
+      addLog(`提高穿越火线优先级失败: ${error}`);
+      console.error('提高穿越火线优先级失败:', error);
+    } finally {
+      setLoading(false);
+    }
+  }, [addLog]);
+
+  const raiseDnfPriority = useCallback(async () => {
+    try {
+      setLoading(true);
+      addLog('开始提高地下城与勇士优先级...');
+      const result = await invoke<string>('raise_dnf_priority');
+      addLog('地下城与勇士优先级修改完成:');
+      result.split('\n').forEach(line => addLog(line));
+    } catch (error) {
+      addLog(`提高地下城与勇士优先级失败: ${error}`);
+      console.error('提高地下城与勇士优先级失败:', error);
+    } finally {
+      setLoading(false);
+    }
+  }, [addLog]);
+
   const checkRegistryPriority = useCallback(async () => {
     try {
       setLoading(true);
@@ -437,6 +468,149 @@ function App() {
       setLoading(false);
     }
   }, [addLog]);
+
+  const generateReport = useCallback(async () => {
+    if (perfHistory.length === 0) {
+      addLog('没有性能数据可导出');
+      return;
+    }
+    setExportingReport(true);
+    addLog('正在生成性能报告...');
+    try {
+      const data = perfHistory;
+      const w = 1400;
+      const pad = 50;
+      const chartW = w - pad * 2;
+      const chartH = 200;
+      const chartGap = 80;
+      const headerH = 160;
+      const totalH = headerH + 3 * (chartH + chartGap) + pad;
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = totalH;
+      const ctx = canvas.getContext('2d')!;
+      ctx.fillStyle = '#121212';
+      ctx.fillRect(0, 0, w, totalH);
+      // 加载logo
+      const logo = await new Promise<HTMLImageElement>((resolve) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => resolve(img);
+        img.src = '/logo.png';
+      });
+      const logoSize = 36;
+      const titleText = 'FuckACE 性能监控报告';
+      ctx.font = 'bold 26px sans-serif';
+      const titleWidth = ctx.measureText(titleText).width;
+      const totalWidth = logoSize + 12 + titleWidth;
+      const startX = (w - totalWidth) / 2;
+      if (logo.complete && logo.naturalWidth > 0) {
+        ctx.drawImage(logo, startX, 18, logoSize, logoSize);
+      }
+      ctx.fillStyle = '#90caf9';
+      ctx.textAlign = 'left';
+      ctx.fillText(titleText, startX + logoSize + 12, 46);
+      ctx.fillStyle = 'rgba(255,255,255,0.6)';
+      ctx.font = '14px sans-serif';
+      ctx.textAlign = 'center';
+      const mins = Math.floor(data.length * 5 / 60);
+      const secs = (data.length * 5) % 60;
+      const dur = mins > 0 ? `${mins}分${secs}秒` : `${secs}秒`;
+      ctx.fillText(
+        `生成时间: ${new Date().toLocaleString('zh-CN')}  |  数据点: ${data.length}  |  监控时长: ${dur}  |  CPU: ${systemInfo?.cpu_model || 'N/A'}`,
+        w / 2, 76
+      );
+      ctx.fillText(
+        `系统: ${systemInfo?.os_name || ''} ${systemInfo?.os_version || ''}  |  内存: ${systemInfo?.total_memory_gb?.toFixed(1) || 'N/A'} GB  |  权限: ${systemInfo?.is_admin ? '管理员' : '普通用户'}`,
+        w / 2, 100
+      );
+      const drawChart = (yOff: number, title: string, unit: string, series: { values: (number | null)[], color: string, label: string }[]) => {
+        const x0 = pad;
+        ctx.fillStyle = 'rgba(255,255,255,0.85)';
+        ctx.font = 'bold 14px sans-serif';
+        ctx.textAlign = 'left';
+        ctx.fillText(title, x0, yOff - 10);
+        ctx.fillStyle = '#1e1e1e';
+        ctx.fillRect(x0, yOff, chartW, chartH);
+        ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(x0, yOff, chartW, chartH);
+        ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+        for (let i = 1; i < 4; i++) {
+          const gy = yOff + (chartH / 4) * i;
+          ctx.beginPath(); ctx.moveTo(x0, gy); ctx.lineTo(x0 + chartW, gy); ctx.stroke();
+        }
+        let maxVal = 0;
+        for (const s of series) for (const v of s.values) if (v !== null && v > maxVal) maxVal = v;
+        if (maxVal === 0) maxVal = 1;
+        maxVal *= 1.15;
+        ctx.fillStyle = 'rgba(255,255,255,0.5)';
+        ctx.font = '10px sans-serif';
+        ctx.textAlign = 'right';
+        for (let i = 0; i <= 4; i++) {
+          ctx.fillText(`${(maxVal / 4 * (4 - i)).toFixed(1)}${unit}`, x0 - 5, yOff + (chartH / 4) * i + 4);
+        }
+        ctx.textAlign = 'center';
+        const step = Math.max(1, Math.floor(data.length / 10));
+        for (let i = 0; i < data.length; i += step) {
+          ctx.fillText(data[i].time, x0 + (i / Math.max(1, data.length - 1)) * chartW, yOff + chartH + 14);
+        }
+        for (const s of series) {
+          ctx.beginPath(); ctx.strokeStyle = s.color; ctx.lineWidth = 1.5;
+          let started = false;
+          for (let i = 0; i < s.values.length; i++) {
+            const v = s.values[i];
+            if (v === null) { started = false; continue; }
+            const px = x0 + (i / Math.max(1, data.length - 1)) * chartW;
+            const py = yOff + chartH - (v / maxVal) * chartH;
+            if (!started) { ctx.moveTo(px, py); started = true; } else ctx.lineTo(px, py);
+          }
+          ctx.stroke();
+        }
+        let lx = x0 + chartW - series.length * 110;
+        for (const s of series) {
+          ctx.fillStyle = s.color;
+          ctx.fillRect(lx, yOff - 14, 10, 10);
+          ctx.fillStyle = 'rgba(255,255,255,0.7)';
+          ctx.font = '11px sans-serif';
+          ctx.textAlign = 'left';
+          ctx.fillText(s.label, lx + 14, yOff - 5);
+          lx += 110;
+        }
+      };
+      const y1 = headerH;
+      drawChart(y1, 'CPU 占用 (%)', '%', [
+        { values: data.map(d => d.sguard_cpu), color: '#f44336', label: 'SGuard64' },
+        { values: data.map(d => d.sguardsvc_cpu), color: '#ff9800', label: 'SGuardSvc64' },
+      ]);
+      drawChart(y1 + chartH + chartGap, '内存占用 (MB)', ' MB', [
+        { values: data.map(d => d.sguard_mem), color: '#f44336', label: 'SGuard64' },
+        { values: data.map(d => d.sguardsvc_mem), color: '#ff9800', label: 'SGuardSvc64' },
+      ]);
+      drawChart(y1 + 2 * (chartH + chartGap), 'I/O 读写 (KB/s)', ' KB/s', [
+        { values: data.map(d => d.sguard_io), color: '#f44336', label: 'SGuard64' },
+        { values: data.map(d => d.sguardsvc_io), color: '#ff9800', label: 'SGuardSvc64' },
+      ]);
+      const dataUrl = canvas.toDataURL('image/png');
+      const base64Data = dataUrl.split(',')[1];
+      const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const savedPath = await invoke<string>('save_report_to_desktop', {
+        imageBase64: base64Data,
+        filename: `FuckACE_Report_${ts}.png`,
+      });
+      addLog(`报告已保存: ${savedPath}`);
+    } catch (error) {
+      addLog(`生成报告失败: ${error}`);
+    } finally {
+      setExportingReport(false);
+    }
+  }, [perfHistory, systemInfo, addLog]);
+
+  useEffect(() => {
+    if (logContainerRef.current) {
+      logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
+    }
+  }, [logs]);
 
   useEffect(() => {
     addLog('FuckACE已启动，开始法克ACE');
@@ -477,10 +651,10 @@ function App() {
   useEffect(() => {
     if (!autoRestrict || hasAutoRestricted || !systemInfo?.is_admin) return;
 
-    const bothFound = performance.some(p => p.name.toLowerCase().includes('sguard64.exe')) &&
+    const anyFound = performance.some(p => p.name.toLowerCase().includes('sguard64.exe')) ||
       performance.some(p => p.name.toLowerCase().includes('sguardsvc64.exe'));
 
-    if (bothFound) {
+    if (anyFound) {
       setHasAutoRestricted(true);
       addLog('检测到ACE进程，自动执行主动限制...');
       executeProcessRestriction();
@@ -488,9 +662,9 @@ function App() {
   }, [performance, autoRestrict, hasAutoRestricted, systemInfo, addLog, executeProcessRestriction]);
 
   useEffect(() => {
-    const bothFound = performance.some(p => p.name.toLowerCase().includes('sguard64.exe')) &&
+    const anyFound = performance.some(p => p.name.toLowerCase().includes('sguard64.exe')) ||
       performance.some(p => p.name.toLowerCase().includes('sguardsvc64.exe'));
-    if (!bothFound) {
+    if (!anyFound) {
       setHasAutoRestricted(false);
     }
   }, [performance]);
@@ -577,26 +751,6 @@ function App() {
                   更新
                 </Button>
               </Badge>
-              <Button
-                variant="outlined"
-                startIcon={<GameIcon />}
-                onClick={async () => await openExternalLink('https://mikugame.icu/')}
-                sx={{ minWidth: 'auto', px: 0.8 }}
-                size="small"
-                title="MikuGame - 初音游戏库"
-              >
-                免费游戏
-              </Button>
-              <Button
-                variant="outlined"
-                startIcon={<ModIcon />}
-                onClick={async () => await openExternalLink('https://mikumod.com/')}
-                sx={{ minWidth: 'auto', px: 0.8 }}
-                size="small"
-                title="MikuMod - 游戏模组社区"
-              >
-                免费模组
-              </Button>
               <Button
                 variant="outlined"
                 startIcon={<GitHubIcon />}
@@ -721,12 +875,24 @@ function App() {
 
           <Box display="flex" gap={1}>
             <Paper elevation={2} sx={{ p: 1.5, flex: 2, minWidth: 0, maxWidth: '100%' }}>
-              <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 0.5 }}>实时监控</Typography>
+              <Box display="flex" justifyContent="space-between" alignItems="center" sx={{ mb: 0.5 }}>
+                <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>实时监控</Typography>
+                <Button
+                  variant="outlined"
+                  size="small"
+                  startIcon={<SaveIcon />}
+                  onClick={generateReport}
+                  disabled={exportingReport || perfHistory.length === 0}
+                  sx={{ fontSize: '0.7rem', py: 0.2 }}
+                >
+                  {exportingReport ? '生成中...' : '导出报告'}
+                </Button>
+              </Box>
               <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.3 }}>
                 {/* CPU 图表 */}
                 <Typography variant="caption" color="text.secondary" sx={{ pl: 0.5, lineHeight: 1.2 }}>CPU (%)</Typography>
                 <ResponsiveContainer width="100%" height={65}>
-                  <LineChart data={perfHistory} margin={{ top: 2, right: 8, left: -20, bottom: 0 }}>
+                  <LineChart data={displayedHistory} margin={{ top: 2, right: 8, left: -20, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
                     <XAxis dataKey="time" tick={{ fontSize: 9 }} interval="preserveStartEnd" />
                     <YAxis tick={{ fontSize: 9 }} domain={[0, 'auto']} unit="%" />
@@ -747,7 +913,7 @@ function App() {
                 {/* 内存图表 */}
                 <Typography variant="caption" color="text.secondary" sx={{ pl: 0.5, lineHeight: 1.2 }}>内存 (MB)</Typography>
                 <ResponsiveContainer width="100%" height={65}>
-                  <LineChart data={perfHistory} margin={{ top: 2, right: 8, left: -20, bottom: 0 }}>
+                  <LineChart data={displayedHistory} margin={{ top: 2, right: 8, left: -20, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
                     <XAxis dataKey="time" tick={{ fontSize: 9 }} interval="preserveStartEnd" />
                     <YAxis tick={{ fontSize: 9 }} domain={[0, 'auto']} unit="MB" />
@@ -769,7 +935,7 @@ function App() {
                 {/* I/O 图表 */}
                 <Typography variant="caption" color="text.secondary" sx={{ pl: 0.5, lineHeight: 1.2 }}>I/O (KB/s)</Typography>
                 <ResponsiveContainer width="100%" height={65}>
-                  <LineChart data={perfHistory} margin={{ top: 2, right: 8, left: -20, bottom: 0 }}>
+                  <LineChart data={displayedHistory} margin={{ top: 2, right: 8, left: -20, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
                     <XAxis dataKey="time" tick={{ fontSize: 9 }} interval="preserveStartEnd" />
                     <YAxis tick={{ fontSize: 9 }} domain={[0, 'auto']} unit="KB" />
@@ -867,6 +1033,26 @@ function App() {
                     sx={{ py: 0.3, fontSize: '0.7rem', whiteSpace: 'nowrap' }}
                   >
                     逆战未来优化
+                  </Button>
+                  <Button
+                    variant="contained"
+                    onClick={raiseCrossfirePriority}
+                    disabled={loading || !systemInfo?.is_admin}
+                    color="success"
+                    size="small"
+                    sx={{ py: 0.3, fontSize: '0.7rem', whiteSpace: 'nowrap' }}
+                  >
+                    穿越火线优化
+                  </Button>
+                  <Button
+                    variant="contained"
+                    onClick={raiseDnfPriority}
+                    disabled={loading || !systemInfo?.is_admin}
+                    color="success"
+                    size="small"
+                    sx={{ py: 0.3, fontSize: '0.7rem', whiteSpace: 'nowrap' }}
+                  >
+                    地下城与勇士优化
                   </Button>
                 </Box>
                 <Box display="flex" gap={0.4}>
