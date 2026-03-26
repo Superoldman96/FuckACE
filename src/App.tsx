@@ -267,10 +267,7 @@ function App() {
         sguardsvc_io: sguardsvc ? parseFloat(((sguardsvc.disk_read_bytes + sguardsvc.disk_write_bytes) / 1024 / 5).toFixed(1)) : null,
       };
 
-      setPerfHistory(prev => {
-        const newHistory = [...prev, point];
-        return newHistory.length > DISPLAY_POINTS ? newHistory.slice(-DISPLAY_POINTS) : newHistory;
-      });
+      setPerfHistory(prev => [...prev, point]);
     } catch (error) {
       console.error('获取性能数据失败:', error);
     }
