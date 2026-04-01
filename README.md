@@ -1,8 +1,8 @@
 # FuckACE
-## FuckACE是一个用来优化所有使用ACE的游戏的免安装软件，可以一键设置ACE进程为效率模式和绑定到最后一个小核心，以降低ACE对电脑的性能影响。
+## FuckACE是一个用来优化所有使用ACE的游戏的免安装软件，可以全自动限制ACE占用，以降低ACE对电脑的性能影响。
 ### 喜欢的话请点点star，谢谢！Ciallo～(∠・ω<)⌒☆
 
-最新版本下载（github的一般会延后发布）：
+最新版本下载：
 - [下载最新版本](https://mikugame.icu/modpacks)
   
 相关使用教程请看B站视频：
@@ -11,7 +11,7 @@
 反馈问题，或者有什么建议都可以说喵＞﹏＜
 - [提出建议！](https://github.com/shshouse/FuckACE/issues/new)
 
-<img width="1349" height="1050" alt="image" src="https://github.com/user-attachments/assets/c46edb5b-0f0f-4164-9045-3397757f2390" />
+<img width="1349" height="1124" alt="image" src="https://github.com/user-attachments/assets/1cf27be7-f81e-457f-80de-4ff45da3f78a" />
 
 ## 注意事项：
 ### 1.对于ACE
@@ -44,18 +44,18 @@
 
 本软件（FuckACE）是一个开源的系统资源调度优化工具，基于 GPLv3 协议发布。在使用前请仔细阅读以下声明：
 
-### 软件性质
+### 软件性质 ヽ(✿ﾟ▽ﾟ)ノ
 - 本软件**不是**游戏作弊工具、外挂或辅助程序。
 - 本软件不会读写游戏内存、不会修改游戏文件、不会注入 DLL、不会 Hook 任何游戏函数。
 - 本软件所有操作均通过 Windows 公开系统 API（如 SetProcessAffinityMask、SetPriorityClass、SetProcessInformation 等）和 Windows 注册表（Image File Execution Options）实现，与系统自带的任务管理器调整进程优先级和 CPU 亲和性的原理一致。
 - 本软件完全开源，源代码公开透明，不含任何后门，不收集任何用户数据。
 
-### 风险告知
+### 风险告知 Σ(っ °Д °;)っ
 - 使用本软件调整反作弊进程的系统资源分配**可能违反**相关游戏的用户协议（EULA）。
 - 虽然经主包测试暂未封号，但**不排除**因使用本软件导致游戏账号被封禁的可能性。
 - 使用本软件即表示您已充分了解并自愿接受上述风险。
 
-### 责任免除
+### 责任免除 ┭┮﹏┭┮
 - 本软件仅供技术研究和学习交流使用。
 - 因使用本软件造成的任何直接或间接后果（包括但不限于游戏账号封禁、系统异常等），均由使用者自行承担，与开发者无关。
 - 开发者不对本软件的适用性、安全性或可靠性作任何明示或暗示的担保。
