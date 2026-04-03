@@ -436,6 +436,16 @@ function App() {
     }
   }, [addLog]);
 
+  const relaunchAsAdmin = useCallback(async () => {
+    try {
+      addLog('正在尝试以管理员身份重启...');
+      await invoke('relaunch_as_admin');
+    } catch (error) {
+      addLog(`重启失败: ${error}`);
+      addLog('无法自动重启，请在系统托盘退出后，右键“以管理员身份运行”');
+    }
+  }, [addLog]);
+
   const checkRegistryPriority = useCallback(async () => {
     try {
       setLoading(true);
@@ -773,65 +783,65 @@ function App() {
 
         <Box display="flex" flexDirection="column" gap={1} sx={{ flex: 1, overflow: 'hidden' }}>
           <Box display="flex" gap={1}>
-            <Paper elevation={2} sx={{ p: 1.5, flex: 1, minWidth: 0, maxWidth: '100%', display: 'flex', flexDirection: 'column' }}
-            >
-              <Typography variant="subtitle1" gutterBottom sx={{ mb: 1, fontWeight: 600 }}>监控状态</Typography>
-              <Box display="flex" flexDirection="column" gap={0.8} sx={{ maxHeight: 150, overflow: 'hidden' }}>
-
-
-                <Box display="flex" justifyContent="space-between" alignItems="center">
-                  <Typography variant="body2">目标核心:</Typography>
-                  <Chip
-                    label={targetCore !== null ? `核心 ${targetCore}` : '检测中...'}
-                    color="info"
-                    variant="outlined"
-                    size="small"
-                  />
-                </Box>
-
-                <Box display="flex" justifyContent="space-between" alignItems="center">
-                  <Typography variant="body2" sx={{ whiteSpace: 'nowrap' }}>目标进程:</Typography>
-                  <Chip
-                    label={gameProcesses.length > 0 ? gameProcesses.join(', ') : '未检测到'}
-                    color={gameProcesses.length > 0 ? 'success' : 'default'}
-                    size="small"
-                    sx={{ maxWidth: '70%' }}
-                  />
-                </Box>
-
-                {loading && <LinearProgress sx={{ mt: 1 }} />}
+            <Paper elevation={2} sx={{ p: 1.5, flex: 2, minWidth: 0, maxWidth: '100%' }}>
+              <Box display="flex" justifyContent="space-between" alignItems="center" sx={{ mb: 0.5 }}>
+                <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>实时监控</Typography>
+                <Button
+                  variant="outlined"
+                  size="small"
+                  startIcon={<SaveIcon />}
+                  onClick={generateReport}
+                  disabled={exportingReport || perfHistory.length === 0}
+                  sx={{ fontSize: '0.7rem', py: 0.2 }}
+                >
+                  {exportingReport ? '生成中...' : '导出报告'}
+                </Button>
               </Box>
-            </Paper>
-
-            <Paper elevation={2} sx={{ p: 1.5, flex: 1, minWidth: 0, maxWidth: '100%' }}>
-              <Typography variant="subtitle1" gutterBottom sx={{ mb: 1, fontWeight: 600 }}>进程状态</Typography>
-              <List dense sx={{ maxHeight: 150, overflowY: 'auto' }}>
-                <ListItem secondaryAction={
-                  <Chip
-                    label={getProcessStatusText(processStatus?.sguard64_found || false, processStatus?.sguard64_restricted || false)}
-                    color={getProcessStatusColor(processStatus?.sguard64_found || false, processStatus?.sguard64_restricted || false)}
-                    size="small"
-                  />
-                }
-                  sx={{ py: 0.3 }}
-                >
-                  <ListItemText primary="SGuard64.exe" primaryTypographyProps={{ variant: 'body2', fontSize: '0.85rem' }} />
-                </ListItem>
-                <Divider />
-                <ListItem secondaryAction={
-                  <Chip
-                    label={getProcessStatusText(processStatus?.sguardsvc64_found || false, processStatus?.sguardsvc64_restricted || false)}
-                    color={getProcessStatusColor(processStatus?.sguardsvc64_found || false, processStatus?.sguardsvc64_restricted || false)}
-                    size="small"
-                  />
-                }
-                  sx={{ py: 0.3 }}
-                >
-                  <ListItemText primary="SGuardSvc64.exe" primaryTypographyProps={{ variant: 'body2', fontSize: '0.85rem' }} />
-                </ListItem>
-                <Divider />
-
-              </List>
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.3 }}>
+                <Typography variant="caption" color="text.secondary" sx={{ pl: 0.5, lineHeight: 1.2 }}>CPU (%)</Typography>
+                <ResponsiveContainer width="100%" height={65}>
+                  <LineChart data={displayedHistory} margin={{ top: 2, right: 8, left: -20, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
+                    <XAxis dataKey="time" tick={{ fontSize: 9 }} interval="preserveStartEnd" />
+                    <YAxis tick={{ fontSize: 9 }} domain={[0, 'auto']} unit="%" />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: '#1e1e1e', border: '1px solid #444', fontSize: 11 }}
+                      formatter={(v: unknown) => [`${v}%`]}
+                    />
+                    <Line type="monotone" dataKey="sguard_cpu" name="SGuard64" stroke="#f44336" dot={false} strokeWidth={1.5} connectNulls />
+                    <Line type="monotone" dataKey="sguardsvc_cpu" name="SGuardSvc64" stroke="#ff9800" dot={false} strokeWidth={1.5} connectNulls />
+                  </LineChart>
+                </ResponsiveContainer>
+                <Typography variant="caption" color="text.secondary" sx={{ pl: 0.5, lineHeight: 1.2 }}>内存 (MB)</Typography>
+                <ResponsiveContainer width="100%" height={65}>
+                  <LineChart data={displayedHistory} margin={{ top: 2, right: 8, left: -20, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
+                    <XAxis dataKey="time" tick={{ fontSize: 9 }} interval="preserveStartEnd" />
+                    <YAxis tick={{ fontSize: 9 }} domain={[0, 'auto']} unit="MB" />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: '#1e1e1e', border: '1px solid #444', fontSize: 11 }}
+                      formatter={(v: unknown) => [`${v} MB`]}
+                    />
+                    <Line type="monotone" dataKey="sguard_mem" name="SGuard64" stroke="#f44336" dot={false} strokeWidth={1.5} connectNulls />
+                    <Line type="monotone" dataKey="sguardsvc_mem" name="SGuardSvc64" stroke="#ff9800" dot={false} strokeWidth={1.5} connectNulls />
+                  </LineChart>
+                </ResponsiveContainer>
+                <Typography variant="caption" color="text.secondary" sx={{ pl: 0.5, lineHeight: 1.2 }}>I/O (KB/s)</Typography>
+                <ResponsiveContainer width="100%" height={65}>
+                  <LineChart data={displayedHistory} margin={{ top: 2, right: 8, left: -20, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
+                    <XAxis dataKey="time" tick={{ fontSize: 9 }} interval="preserveStartEnd" />
+                    <YAxis tick={{ fontSize: 9 }} domain={[0, 'auto']} unit="KB" />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: '#1e1e1e', border: '1px solid #444', fontSize: 11 }}
+                      formatter={(v: unknown) => [`${v} KB/s`]}
+                    />
+                    <Legend wrapperStyle={{ fontSize: 10, lineHeight: '14px' }} />
+                    <Line type="monotone" dataKey="sguard_io" name="SGuard64" stroke="#f44336" dot={false} strokeWidth={1.5} connectNulls />
+                    <Line type="monotone" dataKey="sguardsvc_io" name="SGuardSvc64" stroke="#ff9800" dot={false} strokeWidth={1.5} connectNulls />
+                  </LineChart>
+                </ResponsiveContainer>
+              </Box>
             </Paper>
 
             <Paper elevation={2} sx={{ p: 1.5, flex: 1, minWidth: 0, maxWidth: '100%' }}>
@@ -870,94 +880,48 @@ function App() {
             </Paper>
           </Box>
 
-          <Box display="flex" gap={1}>
-            <Paper elevation={2} sx={{ p: 1.5, flex: 2, minWidth: 0, maxWidth: '100%' }}>
-              <Box display="flex" justifyContent="space-between" alignItems="center" sx={{ mb: 0.5 }}>
-                <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>实时监控</Typography>
+          <Box display="flex" gap={1} sx={{ position: 'relative' }}>
+            {systemInfo && !systemInfo.is_admin && (
+              <Box
+                sx={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  backgroundColor: 'rgba(0, 0, 0, 0.75)',
+                  zIndex: 10,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  backdropFilter: 'blur(4px)',
+                  borderRadius: 1
+                }}
+              >
+                <Typography variant="h6" color="error" gutterBottom sx={{ fontWeight: 'bold' }}>
+                  法克ACE未以管理员启动/(ㄒoㄒ)/~~
+                </Typography>
+                <Typography variant="body2" sx={{ mb: 2, color: '#ddd' }}>
+                  未管理员启动下仍然可以使用性能监控＞﹏＜
+                </Typography>
                 <Button
-                  variant="outlined"
-                  size="small"
-                  startIcon={<SaveIcon />}
-                  onClick={generateReport}
-                  disabled={exportingReport || perfHistory.length === 0}
-                  sx={{ fontSize: '0.7rem', py: 0.2 }}
+                  variant="contained"
+                  color="primary"
+                  onClick={relaunchAsAdmin}
+                  sx={{ px: 4 }}
                 >
-                  {exportingReport ? '生成中...' : '导出报告'}
+                  一键以管理员启动
                 </Button>
+                <Typography variant="caption" sx={{ mt: 2, color: '#aaa', maxWidth: '80%', textAlign: 'center' }}>
+                  如果点击后没有反应，请在右下角系统托盘退出法克ACE后，右键快捷方式选择“以管理员身份运行”。
+                </Typography>
               </Box>
-              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.3 }}>
-                {/* CPU 图表 */}
-                <Typography variant="caption" color="text.secondary" sx={{ pl: 0.5, lineHeight: 1.2 }}>CPU (%)</Typography>
-                <ResponsiveContainer width="100%" height={65}>
-                  <LineChart data={displayedHistory} margin={{ top: 2, right: 8, left: -20, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
-                    <XAxis dataKey="time" tick={{ fontSize: 9 }} interval="preserveStartEnd" />
-                    <YAxis tick={{ fontSize: 9 }} domain={[0, 'auto']} unit="%" />
-                    <Tooltip
-                      contentStyle={{ backgroundColor: '#1e1e1e', border: '1px solid #444', fontSize: 11 }}
-                      formatter={(v: unknown) => [`${v}%`]}
-                    />
-                    <Line
-                      type="monotone" dataKey="sguard_cpu" name="SGuard64"
-                      stroke="#f44336" dot={false} strokeWidth={1.5} connectNulls
-                    />
-                    <Line
-                      type="monotone" dataKey="sguardsvc_cpu" name="SGuardSvc64"
-                      stroke="#ff9800" dot={false} strokeWidth={1.5} connectNulls
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
-                {/* 内存图表 */}
-                <Typography variant="caption" color="text.secondary" sx={{ pl: 0.5, lineHeight: 1.2 }}>内存 (MB)</Typography>
-                <ResponsiveContainer width="100%" height={65}>
-                  <LineChart data={displayedHistory} margin={{ top: 2, right: 8, left: -20, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
-                    <XAxis dataKey="time" tick={{ fontSize: 9 }} interval="preserveStartEnd" />
-                    <YAxis tick={{ fontSize: 9 }} domain={[0, 'auto']} unit="MB" />
-                    <Tooltip
-                      contentStyle={{ backgroundColor: '#1e1e1e', border: '1px solid #444', fontSize: 11 }}
-                      formatter={(v: unknown) => [`${v} MB`]}
-                    />
-
-                    <Line
-                      type="monotone" dataKey="sguard_mem" name="SGuard64"
-                      stroke="#f44336" dot={false} strokeWidth={1.5} connectNulls
-                    />
-                    <Line
-                      type="monotone" dataKey="sguardsvc_mem" name="SGuardSvc64"
-                      stroke="#ff9800" dot={false} strokeWidth={1.5} connectNulls
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
-                {/* I/O 图表 */}
-                <Typography variant="caption" color="text.secondary" sx={{ pl: 0.5, lineHeight: 1.2 }}>I/O (KB/s)</Typography>
-                <ResponsiveContainer width="100%" height={65}>
-                  <LineChart data={displayedHistory} margin={{ top: 2, right: 8, left: -20, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
-                    <XAxis dataKey="time" tick={{ fontSize: 9 }} interval="preserveStartEnd" />
-                    <YAxis tick={{ fontSize: 9 }} domain={[0, 'auto']} unit="KB" />
-                    <Tooltip
-                      contentStyle={{ backgroundColor: '#1e1e1e', border: '1px solid #444', fontSize: 11 }}
-                      formatter={(v: unknown) => [`${v} KB/s`]}
-                    />
-                    <Legend wrapperStyle={{ fontSize: 10, lineHeight: '14px' }} />
-
-                    <Line
-                      type="monotone" dataKey="sguard_io" name="SGuard64"
-                      stroke="#f44336" dot={false} strokeWidth={1.5} connectNulls
-                    />
-                    <Line
-                      type="monotone" dataKey="sguardsvc_io" name="SGuardSvc64"
-                      stroke="#ff9800" dot={false} strokeWidth={1.5} connectNulls
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
-              </Box>
-            </Paper>
+            )}
 
             <Paper elevation={2} sx={{ p: 1.5, flex: 1, minWidth: 0, maxWidth: '100%', display: 'flex', flexDirection: 'column' }}
             >
-              <Typography variant="subtitle1" gutterBottom sx={{ mb: 0.5, fontWeight: 600 }}>被动限制(不直接干涉ACE，较安全)</Typography>
+              <Typography variant="subtitle1" gutterBottom sx={{ mb: 0.5, fontWeight: 600 }}>被动限制(开游戏前使用)</Typography>
               <Box display="flex" flexDirection="column" gap={0.4} sx={{ flex: 1 }}>
                 <Button
                   variant="contained"
@@ -1081,7 +1045,7 @@ function App() {
 
             <Paper elevation={2} sx={{ p: 1.5, flex: 1, minWidth: 0, maxWidth: '100%', display: 'flex', flexDirection: 'column' }}
             >
-              <Typography variant="subtitle1" gutterBottom sx={{ mb: 0.5, fontWeight: 600 }}>主动限制(小白不建议使用)</Typography>
+              <Typography variant="subtitle1" gutterBottom sx={{ mb: 0.5, fontWeight: 600 }}>主动限制(开游戏后使用)</Typography>
               <Box display="grid" gridTemplateColumns="1fr 1fr" gap={0.5} sx={{ mb: 0.5 }}>
                 <FormControlLabel
                   control={
@@ -1200,6 +1164,57 @@ function App() {
                 >
                   执行限制
                 </Button>
+              </Box>
+            </Paper>
+
+            <Paper elevation={2} sx={{ p: 1.5, flex: 1, minWidth: 0, maxWidth: '100%', display: 'flex', flexDirection: 'column' }}>
+              <Typography variant="subtitle1" gutterBottom sx={{ mb: 0.5, fontWeight: 600 }}>主动限制状态</Typography>
+              <Box display="flex" flexDirection="column" gap={0.8}>
+                <Box display="flex" justifyContent="space-between" alignItems="center">
+                  <Typography variant="body2">目标核心:</Typography>
+                  <Chip
+                    label={targetCore !== null ? `核心 ${targetCore}` : '检测中...'}
+                    color="info"
+                    variant="outlined"
+                    size="small"
+                  />
+                </Box>
+                <Box display="flex" justifyContent="space-between" alignItems="center">
+                  <Typography variant="body2" sx={{ whiteSpace: 'nowrap' }}>目标进程:</Typography>
+                  <Chip
+                    label={gameProcesses.length > 0 ? gameProcesses.join(', ') : '未检测到'}
+                    color={gameProcesses.length > 0 ? 'success' : 'default'}
+                    size="small"
+                    sx={{ maxWidth: '70%' }}
+                  />
+                </Box>
+                <Divider sx={{ my: 0.3 }} />
+                <List dense sx={{ py: 0 }}>
+                  <ListItem secondaryAction={
+                    <Chip
+                      label={getProcessStatusText(processStatus?.sguard64_found || false, processStatus?.sguard64_restricted || false)}
+                      color={getProcessStatusColor(processStatus?.sguard64_found || false, processStatus?.sguard64_restricted || false)}
+                      size="small"
+                    />
+                  }
+                    sx={{ py: 0.3 }}
+                  >
+                    <ListItemText primary="SGuard64.exe" primaryTypographyProps={{ variant: 'body2', fontSize: '0.85rem' }} />
+                  </ListItem>
+                  <Divider />
+                  <ListItem secondaryAction={
+                    <Chip
+                      label={getProcessStatusText(processStatus?.sguardsvc64_found || false, processStatus?.sguardsvc64_restricted || false)}
+                      color={getProcessStatusColor(processStatus?.sguardsvc64_found || false, processStatus?.sguardsvc64_restricted || false)}
+                      size="small"
+                    />
+                  }
+                    sx={{ py: 0.3 }}
+                  >
+                    <ListItemText primary="SGuardSvc64.exe" primaryTypographyProps={{ variant: 'body2', fontSize: '0.85rem' }} />
+                  </ListItem>
+                </List>
+                {loading && <LinearProgress sx={{ mt: 0.5 }} />}
               </Box>
             </Paper>
           </Box>

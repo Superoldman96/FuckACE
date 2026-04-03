@@ -532,14 +532,14 @@ fn restrict_target_processes(
 }
 
 #[tauri::command]
-fn restrict_processes(
-    _state: State<AppState>,
+async fn restrict_processes(
+    _state: State<'_, AppState>,
     enable_cpu_affinity: bool,
     enable_process_priority: bool,
     enable_efficiency_mode: bool,
     enable_io_priority: bool,
     enable_memory_priority: bool,
-) -> RestrictResult {
+) -> Result<RestrictResult, String> {
     let result = restrict_target_processes(
         enable_cpu_affinity,
         enable_process_priority,
@@ -547,7 +547,7 @@ fn restrict_processes(
         enable_io_priority,
         enable_memory_priority,
     );
-    result
+    Ok(result)
 }
 
 fn enable_debug_privilege() -> bool {
@@ -638,7 +638,7 @@ fn is_elevated() -> bool {
 }
 
 #[tauri::command]
-fn get_webview2_environment() -> String {
+async fn get_webview2_environment() -> String {
     #[cfg(target_os = "windows")]
     {
         use std::env;
@@ -664,9 +664,10 @@ fn get_webview2_environment() -> String {
 }
 
 #[tauri::command]
-fn get_system_info() -> SystemInfo {
-    let mut system = System::new_all();
-    system.refresh_all();
+async fn get_system_info() -> SystemInfo {
+    let mut system = System::new();
+    system.refresh_cpu_specifics(sysinfo::CpuRefreshKind::everything());
+    system.refresh_memory();
 
     let cpu_model = if let Some(cpu) = system.cpus().first() {
         cpu.brand().to_string()
@@ -692,14 +693,15 @@ fn get_system_info() -> SystemInfo {
         os_version,
         is_admin,
         total_memory_gb,
-        webview2_env: get_webview2_environment(),
+        webview2_env: get_webview2_environment().await,
     }
 }
 
 #[tauri::command]
-fn get_process_performance() -> Vec<ProcessPerformance> {
-    let mut system = System::new_all();
-    system.refresh_all();
+async fn get_process_performance() -> Vec<ProcessPerformance> {
+    let mut system = System::new();
+    system.refresh_cpu_specifics(sysinfo::CpuRefreshKind::everything());
+    system.refresh_processes();
 
     std::thread::sleep(std::time::Duration::from_millis(200));
     system.refresh_processes();
@@ -730,12 +732,12 @@ fn get_process_performance() -> Vec<ProcessPerformance> {
 }
 
 #[tauri::command]
-fn check_game_processes() -> Vec<String> {
+async fn check_game_processes() -> Vec<String> {
     Vec::new()
 }
 
 #[tauri::command]
-fn set_game_process_priority() -> Result<String, String> {
+async fn set_game_process_priority() -> Result<String, String> {
     Ok(
         "游戏进程优先级设置功能已改为手动执行模式。请通过前端界面手动选择要设置的进程。"
             .to_string(),
@@ -818,7 +820,7 @@ async fn show_close_dialog(app_handle: AppHandle) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn close_application(_app_handle: AppHandle) -> Result<String, String> {
+async fn close_application(_app_handle: AppHandle) -> Result<String, String> {
     //退出FuckACE/(ㄒoㄒ)/~~
     std::process::exit(0);
 }
@@ -832,96 +834,74 @@ fn get_exe_path() -> Result<String, String> {
 }
 
 #[tauri::command]
-fn enable_autostart() -> Result<String, String> {
-    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-    let path = r"Software\Microsoft\Windows\CurrentVersion\Run";
+async fn enable_autostart() -> Result<String, String> {
+    if !is_elevated() {
+        return Err("需要管理员权限才能设置开机以管理员自启".to_string());
+    }
 
-    let (key, _) = hkcu
-        .create_subkey(path)
-        .map_err(|e| format!("打开注册表失败: {}", e))?;
+    // 清理旧的系统注册表启动项（如果存在）
+    let hkcu = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER);
+    if let Ok(key) = hkcu.open_subkey_with_flags(r"Software\Microsoft\Windows\CurrentVersion\Run", winreg::enums::KEY_WRITE) {
+        let _ = key.delete_value("FuckACE");
+    }
 
     let exe_path = get_exe_path()?;
 
-    // 检查文件是否存在，如果不存在则使用当前目录的相对路径
     let final_path = if std::path::Path::new(&exe_path).exists() {
         exe_path
     } else {
-        // 如果绝对路径不存在，尝试使用当前工作目录的相对路径
-        let current_dir =
-            std::env::current_dir().map_err(|e| format!("获取当前目录失败: {}", e))?;
+        let current_dir = std::env::current_dir().map_err(|e| format!("获取当前目录失败: {}", e))?;
         let exe_name = std::path::Path::new(&exe_path)
             .file_name()
             .and_then(|s| s.to_str())
             .ok_or_else(|| "无法获取可执行文件名".to_string())?;
 
-        let relative_path = current_dir.join(exe_name);
-        relative_path
-            .to_str()
-            .ok_or_else(|| "路径转换失败".to_string())?
-            .to_string()
+        current_dir.join(exe_name).to_string_lossy().to_string()
     };
 
-    key.set_value("FuckACE", &final_path)
-        .map_err(|e| format!("设置注册表值失败: {}", e))?;
+    let status = std::process::Command::new("schtasks")
+        .args(["/create", "/tn", "FuckACE_AutoStart", "/tr", &format!("\"{}\"", final_path), "/rl", "HIGHEST", "/sc", "ONLOGON", "/f"])
+        .status()
+        .map_err(|e| format!("执行命令失败: {}", e))?;
 
-    Ok("开机自启动已启用".to_string())
-}
-
-#[tauri::command]
-fn disable_autostart() -> Result<String, String> {
-    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-    let path = r"Software\Microsoft\Windows\CurrentVersion\Run";
-
-    let key = hkcu
-        .open_subkey_with_flags(path, KEY_WRITE)
-        .map_err(|e| format!("打开注册表失败: {}", e))?;
-
-    key.delete_value("FuckACE")
-        .map_err(|e| format!("删除注册表值失败: {}", e))?;
-
-    Ok("开机自启动已禁用".to_string())
-}
-
-#[tauri::command]
-fn check_autostart() -> Result<bool, String> {
-    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-    let path = r"Software\Microsoft\Windows\CurrentVersion\Run";
-
-    let key = hkcu
-        .open_subkey(path)
-        .map_err(|_| "打开注册表失败".to_string())?;
-
-    match key.get_value::<String, _>("FuckACE") {
-        Ok(registry_path) => {
-            // 检查注册表中的路径是否存在
-            if std::path::Path::new(&registry_path).exists() {
-                Ok(true)
-            } else {
-                // 路径不存在，检查当前目录的相对路径
-                let current_exe = get_exe_path()?;
-                let current_dir =
-                    std::env::current_dir().map_err(|e| format!("获取当前目录失败: {}", e))?;
-                let exe_name = std::path::Path::new(&current_exe)
-                    .file_name()
-                    .and_then(|s| s.to_str())
-                    .ok_or_else(|| "无法获取可执行文件名".to_string())?;
-
-                let relative_path = current_dir.join(exe_name);
-                if relative_path.exists() {
-                    // 路径不匹配但文件存在，返回false表示需要重新设置
-                    Ok(false)
-                } else {
-                    // 文件不存在，返回false
-                    Ok(false)
-                }
-            }
-        }
-        Err(_) => Ok(false),
+    if status.success() {
+        Ok("开机免UAC管理员自启动已启用".to_string())
+    } else {
+        Err("设置计划任务失败".to_string())
     }
 }
 
 #[tauri::command]
-fn lower_ace_priority() -> Result<String, String> {
+async fn disable_autostart() -> Result<String, String> {
+    if !is_elevated() {
+        return Err("需要管理员权限才能取消开机自启".to_string());
+    }
+
+    let hkcu = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER);
+    if let Ok(key) = hkcu.open_subkey_with_flags(r"Software\Microsoft\Windows\CurrentVersion\Run", winreg::enums::KEY_WRITE) {
+        let _ = key.delete_value("FuckACE");
+    }
+
+    let status = std::process::Command::new("schtasks")
+        .args(["/delete", "/tn", "FuckACE_AutoStart", "/f"])
+        .status()
+        .map_err(|e| format!("执行命令失败: {}", e))?;
+
+    if status.success() {
+        Ok("开机自启动已禁用".to_string())
+    } else {
+        Ok("开机自启动已禁用(或者未曾启用)".to_string())
+    }
+}
+
+#[tauri::command]
+async fn check_autostart() -> Result<bool, String> {
+    let task_path = std::path::Path::new("C:\\Windows\\System32\\Tasks\\FuckACE_AutoStart");
+    Ok(task_path.exists())
+}
+
+#[tauri::command]
+async fn lower_ace_priority() -> Result<String, String> {
     if !is_elevated() {
         return Err("需要管理员权限才能修改注册表".to_string());
     }
@@ -972,7 +952,7 @@ fn lower_ace_priority() -> Result<String, String> {
 }
 
 #[tauri::command]
-fn raise_delta_priority() -> Result<String, String> {
+async fn raise_delta_priority() -> Result<String, String> {
     if !is_elevated() {
         return Err("需要管理员权限才能修改注册表".to_string());
     }
@@ -1012,7 +992,7 @@ fn raise_delta_priority() -> Result<String, String> {
 }
 
 #[tauri::command]
-fn raise_crossfire_priority() -> Result<String, String> {
+async fn raise_crossfire_priority() -> Result<String, String> {
     if !is_elevated() {
         return Err("需要管理员权限才能修改注册表".to_string());
     }
@@ -1052,7 +1032,7 @@ fn raise_crossfire_priority() -> Result<String, String> {
 }
 
 #[tauri::command]
-fn modify_valorant_registry_priority() -> Result<String, String> {
+async fn modify_valorant_registry_priority() -> Result<String, String> {
     if !is_elevated() {
         return Err("需要管理员权限才能修改注册表".to_string());
     }
@@ -1097,7 +1077,7 @@ fn modify_valorant_registry_priority() -> Result<String, String> {
 }
 
 #[tauri::command]
-fn raise_league_priority() -> Result<String, String> {
+async fn raise_league_priority() -> Result<String, String> {
     if !is_elevated() {
         return Err("需要管理员权限才能修改注册表".to_string());
     }
@@ -1137,7 +1117,7 @@ fn raise_league_priority() -> Result<String, String> {
 }
 
 #[tauri::command]
-fn raise_arena_priority() -> Result<String, String> {
+async fn raise_arena_priority() -> Result<String, String> {
     if !is_elevated() {
         return Err("需要管理员权限才能修改注册表".to_string());
     }
@@ -1177,7 +1157,7 @@ fn raise_arena_priority() -> Result<String, String> {
 }
 
 #[tauri::command]
-fn raise_finals_priority() -> Result<String, String> {
+async fn raise_finals_priority() -> Result<String, String> {
     if !is_elevated() {
         return Err("需要管理员权限才能修改注册表".to_string());
     }
@@ -1217,7 +1197,7 @@ fn raise_finals_priority() -> Result<String, String> {
 }
 
 #[tauri::command]
-fn raise_nzfuture_priority() -> Result<String, String> {
+async fn raise_nzfuture_priority() -> Result<String, String> {
     if !is_elevated() {
         return Err("需要管理员权限才能修改注册表".to_string());
     }
@@ -1257,7 +1237,7 @@ fn raise_nzfuture_priority() -> Result<String, String> {
 }
 
 #[tauri::command]
-fn raise_dnf_priority() -> Result<String, String> {
+async fn raise_dnf_priority() -> Result<String, String> {
     if !is_elevated() {
         return Err("需要管理员权限才能修改注册表".to_string());
     }
@@ -1297,7 +1277,7 @@ fn raise_dnf_priority() -> Result<String, String> {
 }
 
 #[tauri::command]
-fn check_registry_priority() -> Result<String, String> {
+async fn check_registry_priority() -> Result<String, String> {
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
     let base_path = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options";
 
@@ -1345,7 +1325,7 @@ fn check_registry_priority() -> Result<String, String> {
 }
 
 #[tauri::command]
-fn reset_registry_priority() -> Result<String, String> {
+async fn reset_registry_priority() -> Result<String, String> {
     if !is_elevated() {
         return Err("需要管理员权限才能修改注册表".to_string());
     }
@@ -1390,7 +1370,7 @@ fn reset_registry_priority() -> Result<String, String> {
 }
 
 #[tauri::command]
-fn save_report_to_desktop(image_base64: String, filename: String) -> Result<String, String> {
+async fn save_report_to_desktop(image_base64: String, filename: String) -> Result<String, String> {
     use base64::Engine;
     use std::path::PathBuf;
 
@@ -1412,6 +1392,16 @@ fn save_report_to_desktop(image_base64: String, filename: String) -> Result<Stri
     std::fs::write(&file_path, data).map_err(|e| format!("保存文件失败: {}", e))?;
 
     Ok(file_path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+async fn relaunch_as_admin() -> Result<(), String> {
+    let exe_path = get_exe_path()?;
+    std::process::Command::new("powershell")
+        .args(["-Command", "Start-Process", "-FilePath", &format!("'{}'", exe_path), "-Verb", "RunAs"])
+        .spawn()
+        .map_err(|e| format!("启动管理员进程失败: {}", e))?;
+    std::process::exit(0);
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1461,7 +1451,8 @@ pub fn run() {
             set_game_process_priority,
             save_report_to_desktop,
             raise_crossfire_priority,
-            raise_dnf_priority
+            raise_dnf_priority,
+            relaunch_as_admin
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
