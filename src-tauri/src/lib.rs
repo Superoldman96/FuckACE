@@ -835,69 +835,53 @@ fn get_exe_path() -> Result<String, String> {
 
 #[tauri::command]
 async fn enable_autostart() -> Result<String, String> {
-    if !is_elevated() {
-        return Err("需要管理员权限才能设置开机以管理员自启".to_string());
-    }
-
-    // 清理旧的系统注册表启动项（如果存在）
-    let hkcu = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER);
-    if let Ok(key) = hkcu.open_subkey_with_flags(r"Software\Microsoft\Windows\CurrentVersion\Run", winreg::enums::KEY_WRITE) {
-        let _ = key.delete_value("FuckACE");
-    }
-
     let exe_path = get_exe_path()?;
 
-    let final_path = if std::path::Path::new(&exe_path).exists() {
-        exe_path
-    } else {
-        let current_dir = std::env::current_dir().map_err(|e| format!("获取当前目录失败: {}", e))?;
-        let exe_name = std::path::Path::new(&exe_path)
-            .file_name()
-            .and_then(|s| s.to_str())
-            .ok_or_else(|| "无法获取可执行文件名".to_string())?;
+    // 清理旧的计划任务（如果存在）
+    let _ = std::process::Command::new("schtasks")
+        .args(["/delete", "/tn", "FuckACE_AutoStart", "/f"])
+        .output();
 
-        current_dir.join(exe_name).to_string_lossy().to_string()
-    };
+    let hkcu = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER);
+    let (key, _) = hkcu
+        .create_subkey(r"Software\Microsoft\Windows\CurrentVersion\Run")
+        .map_err(|e| format!("打开注册表失败: {}", e))?;
 
-    let status = std::process::Command::new("schtasks")
-        .args(["/create", "/tn", "FuckACE_AutoStart", "/tr", &format!("\"{}\"", final_path), "/rl", "HIGHEST", "/sc", "ONLOGON", "/f"])
-        .status()
-        .map_err(|e| format!("执行命令失败: {}", e))?;
+    key.set_value("FuckACE", &format!("\"{}\"" , exe_path))
+        .map_err(|e| format!("写入注册表失败: {}", e))?;
 
-    if status.success() {
-        Ok("开机免UAC管理员自启动已启用".to_string())
-    } else {
-        Err("设置计划任务失败".to_string())
-    }
+    Ok("开机自启动已启用（启动后需手动以管理员运行以使用完整功能）".to_string())
 }
 
 #[tauri::command]
 async fn disable_autostart() -> Result<String, String> {
-    if !is_elevated() {
-        return Err("需要管理员权限才能取消开机自启".to_string());
-    }
+    // 清理旧的计划任务（如果存在）
+    let _ = std::process::Command::new("schtasks")
+        .args(["/delete", "/tn", "FuckACE_AutoStart", "/f"])
+        .output();
 
     let hkcu = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER);
-    if let Ok(key) = hkcu.open_subkey_with_flags(r"Software\Microsoft\Windows\CurrentVersion\Run", winreg::enums::KEY_WRITE) {
+    if let Ok(key) = hkcu.open_subkey_with_flags(
+        r"Software\Microsoft\Windows\CurrentVersion\Run",
+        winreg::enums::KEY_WRITE,
+    ) {
         let _ = key.delete_value("FuckACE");
     }
 
-    let status = std::process::Command::new("schtasks")
-        .args(["/delete", "/tn", "FuckACE_AutoStart", "/f"])
-        .status()
-        .map_err(|e| format!("执行命令失败: {}", e))?;
-
-    if status.success() {
-        Ok("开机自启动已禁用".to_string())
-    } else {
-        Ok("开机自启动已禁用(或者未曾启用)".to_string())
-    }
+    Ok("开机自启动已禁用".to_string())
 }
 
 #[tauri::command]
 async fn check_autostart() -> Result<bool, String> {
-    let task_path = std::path::Path::new("C:\\Windows\\System32\\Tasks\\FuckACE_AutoStart");
-    Ok(task_path.exists())
+    let hkcu = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER);
+    if let Ok(key) = hkcu.open_subkey(r"Software\Microsoft\Windows\CurrentVersion\Run") {
+        let val: Result<String, _> = key.get_value("FuckACE");
+        Ok(val.is_ok())
+    } else {
+        // 兼容旧版：检查是否有计划任务残留
+        let task_path = std::path::Path::new("C:\\Windows\\System32\\Tasks\\FuckACE_AutoStart");
+        Ok(task_path.exists())
+    }
 }
 
 #[tauri::command]
@@ -1277,6 +1261,126 @@ async fn raise_dnf_priority() -> Result<String, String> {
 }
 
 #[tauri::command]
+async fn raise_rocoworld_priority() -> Result<String, String> {
+    if !is_elevated() {
+        return Err("需要管理员权限才能修改注册表".to_string());
+    }
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    let base_path = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options";
+    let mut results = Vec::new();
+    let configs = vec![("NRC-Win64-Shipping.exe", 3u32, 3u32)];
+
+    for (exe_name, cpu_priority, io_priority) in configs {
+        let key_path = format!(r"{}\{}\PerfOptions", base_path, exe_name);
+
+        match hklm.create_subkey(&key_path) {
+            Ok((key, _)) => {
+                let mut success = true;
+                if let Err(e) = key.set_value("CpuPriorityClass", &cpu_priority) {
+                    results.push(format!("{}:设置CPU优先级失败:{}", exe_name, e));
+                    success = false;
+                }
+                if let Err(e) = key.set_value("IoPriority", &io_priority) {
+                    results.push(format!("{}:设置I/O优先级失败:{}", exe_name, e));
+                    success = false;
+                }
+                if success {
+                    results.push(format!(
+                        "{}:设置成功(CPU:{},I/O:{})",
+                        exe_name, cpu_priority, io_priority
+                    ));
+                }
+            }
+            Err(e) => {
+                results.push(format!("{}:创建注册表项失败:{}", exe_name, e));
+            }
+        }
+    }
+
+    Ok(results.join("\n"))
+}
+
+#[tauri::command]
+async fn raise_wutheringwaves_priority() -> Result<String, String> {
+    if !is_elevated() {
+        return Err("需要管理员权限才能修改注册表".to_string());
+    }
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    let base_path = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options";
+    let mut results = Vec::new();
+    let configs = vec![("Client-Win64-Shipping.exe", 3u32, 3u32)];
+
+    for (exe_name, cpu_priority, io_priority) in configs {
+        let key_path = format!(r"{}\{}\PerfOptions", base_path, exe_name);
+
+        match hklm.create_subkey(&key_path) {
+            Ok((key, _)) => {
+                let mut success = true;
+                if let Err(e) = key.set_value("CpuPriorityClass", &cpu_priority) {
+                    results.push(format!("{}:设置CPU优先级失败:{}", exe_name, e));
+                    success = false;
+                }
+                if let Err(e) = key.set_value("IoPriority", &io_priority) {
+                    results.push(format!("{}:设置I/O优先级失败:{}", exe_name, e));
+                    success = false;
+                }
+                if success {
+                    results.push(format!(
+                        "{}:设置成功(CPU:{},I/O:{})",
+                        exe_name, cpu_priority, io_priority
+                    ));
+                }
+            }
+            Err(e) => {
+                results.push(format!("{}:创建注册表项失败:{}", exe_name, e));
+            }
+        }
+    }
+
+    Ok(results.join("\n"))
+}
+
+#[tauri::command]
+async fn raise_poe2_priority() -> Result<String, String> {
+    if !is_elevated() {
+        return Err("需要管理员权限才能修改注册表".to_string());
+    }
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    let base_path = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options";
+    let mut results = Vec::new();
+    let configs = vec![("PathOfExileSteam.exe", 3u32, 3u32)];
+
+    for (exe_name, cpu_priority, io_priority) in configs {
+        let key_path = format!(r"{}\{}\PerfOptions", base_path, exe_name);
+
+        match hklm.create_subkey(&key_path) {
+            Ok((key, _)) => {
+                let mut success = true;
+                if let Err(e) = key.set_value("CpuPriorityClass", &cpu_priority) {
+                    results.push(format!("{}:设置CPU优先级失败:{}", exe_name, e));
+                    success = false;
+                }
+                if let Err(e) = key.set_value("IoPriority", &io_priority) {
+                    results.push(format!("{}:设置I/O优先级失败:{}", exe_name, e));
+                    success = false;
+                }
+                if success {
+                    results.push(format!(
+                        "{}:设置成功(CPU:{},I/O:{})",
+                        exe_name, cpu_priority, io_priority
+                    ));
+                }
+            }
+            Err(e) => {
+                results.push(format!("{}:创建注册表项失败:{}", exe_name, e));
+            }
+        }
+    }
+
+    Ok(results.join("\n"))
+}
+
+#[tauri::command]
 async fn check_registry_priority() -> Result<String, String> {
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
     let base_path = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options";
@@ -1292,7 +1396,11 @@ async fn check_registry_priority() -> Result<String, String> {
         "ABInfinite-Win64-Shipping.exe",
         "discovery.exe",
         "NZFuture-Win64-Shipping.exe",
+        "crossfire.exe",
         "DNF.exe",
+        "NRC-Win64-Shipping.exe",
+        "Client-Win64-Shipping.exe",
+        "PathOfExileSteam.exe",
     ];
 
     for exe_name in exe_names {
@@ -1346,6 +1454,9 @@ async fn reset_registry_priority() -> Result<String, String> {
         "NZFuture-Win64-Shipping.exe",
         "crossfire.exe",
         "DNF.exe",
+        "NRC-Win64-Shipping.exe",
+        "Client-Win64-Shipping.exe",
+        "PathOfExileSteam.exe",
     ];
 
     for exe_name in exe_names {
@@ -1394,15 +1505,7 @@ async fn save_report_to_desktop(image_base64: String, filename: String) -> Resul
     Ok(file_path.to_string_lossy().to_string())
 }
 
-#[tauri::command]
-async fn relaunch_as_admin() -> Result<(), String> {
-    let exe_path = get_exe_path()?;
-    std::process::Command::new("powershell")
-        .args(["-Command", "Start-Process", "-FilePath", &format!("'{}'", exe_path), "-Verb", "RunAs"])
-        .spawn()
-        .map_err(|e| format!("启动管理员进程失败: {}", e))?;
-    std::process::exit(0);
-}
+
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -1452,7 +1555,10 @@ pub fn run() {
             save_report_to_desktop,
             raise_crossfire_priority,
             raise_dnf_priority,
-            relaunch_as_admin
+            raise_rocoworld_priority,
+            raise_wutheringwaves_priority,
+            raise_poe2_priority,
+
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

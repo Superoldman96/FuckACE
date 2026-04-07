@@ -36,7 +36,7 @@ import {
 } from '@mui/material';
 import {
   PlayArrow as StartIcon,
-  CheckCircle,
+
   DarkMode as DarkModeIcon,
   LightMode as LightModeIcon,
   GitHub as GitHubIcon,
@@ -436,15 +436,7 @@ function App() {
     }
   }, [addLog]);
 
-  const relaunchAsAdmin = useCallback(async () => {
-    try {
-      addLog('正在尝试以管理员身份重启...');
-      await invoke('relaunch_as_admin');
-    } catch (error) {
-      addLog(`重启失败: ${error}`);
-      addLog('无法自动重启，请在系统托盘退出后，右键“以管理员身份运行”');
-    }
-  }, [addLog]);
+
 
   const checkRegistryPriority = useCallback(async () => {
     try {
@@ -868,10 +860,7 @@ function App() {
                   </Box>
                   <Box display="flex" justifyContent="space-between" alignItems="center">
                     <Typography variant="caption" color="text.secondary">权限:</Typography>
-                    <Box display="flex" alignItems="center" gap={0.5}>
-                      <Typography variant="caption">{systemInfo.is_admin ? '管理员' : '普通用户'}</Typography>
-                      {systemInfo.is_admin && <CheckCircle color="success" sx={{ fontSize: 14 }} />}
-                    </Box>
+                    <Typography variant="caption">管理员</Typography>
                   </Box>
                 </Box>
               ) : (
@@ -880,44 +869,7 @@ function App() {
             </Paper>
           </Box>
 
-          <Box display="flex" gap={1} sx={{ position: 'relative' }}>
-            {systemInfo && !systemInfo.is_admin && (
-              <Box
-                sx={{
-                  position: 'absolute',
-                  top: 0,
-                  left: 0,
-                  right: 0,
-                  bottom: 0,
-                  backgroundColor: 'rgba(0, 0, 0, 0.75)',
-                  zIndex: 10,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  backdropFilter: 'blur(4px)',
-                  borderRadius: 1
-                }}
-              >
-                <Typography variant="h6" color="error" gutterBottom sx={{ fontWeight: 'bold' }}>
-                  法克ACE未以管理员启动/(ㄒoㄒ)/~~
-                </Typography>
-                <Typography variant="body2" sx={{ mb: 2, color: '#ddd' }}>
-                  未管理员启动下仍然可以使用性能监控＞﹏＜
-                </Typography>
-                <Button
-                  variant="contained"
-                  color="primary"
-                  onClick={relaunchAsAdmin}
-                  sx={{ px: 4 }}
-                >
-                  一键以管理员启动
-                </Button>
-                <Typography variant="caption" sx={{ mt: 2, color: '#aaa', maxWidth: '80%', textAlign: 'center' }}>
-                  如果点击后没有反应，请在右下角系统托盘退出法克ACE后，右键快捷方式选择“以管理员身份运行”。
-                </Typography>
-              </Box>
-            )}
+          <Box display="flex" gap={1}>
 
             <Paper elevation={2} sx={{ p: 1.5, flex: 1, minWidth: 0, maxWidth: '100%', display: 'flex', flexDirection: 'column' }}
             >
