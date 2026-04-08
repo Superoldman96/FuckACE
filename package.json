@@ -1,11 +1,12 @@
 {
   "name": "fuckace",
   "private": true,
-  "version": "0.8.1",
+  "version": "0.8.2",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build",
+    "sync-version": "node scripts/sync-version.cjs",
+    "dev": "node scripts/sync-version.cjs && vite",
+    "build": "node scripts/sync-version.cjs && tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
     "build:portable": "powershell -ExecutionPolicy Bypass -File ./build-portable.ps1"

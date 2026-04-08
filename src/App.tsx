@@ -436,6 +436,47 @@ function App() {
     }
   }, [addLog]);
 
+  const raiseRocoworldPriority = useCallback(async () => {
+    try {
+      setLoading(true);
+      addLog('开始提高洛克王国世界优先级...');
+      const result = await invoke<string>('raise_rocoworld_priority');
+      addLog('洛克王国世界优先级修改完成:');
+      result.split('\n').forEach(line => addLog(line));
+    } catch (error) {
+      addLog(`提高洛克王国世界优先级失败: ${error}`);
+    } finally {
+      setLoading(false);
+    }
+  }, [addLog]);
+
+  const raiseWutheringwavesPriority = useCallback(async () => {
+    try {
+      setLoading(true);
+      addLog('开始提高鸣潮优先级...');
+      const result = await invoke<string>('raise_wutheringwaves_priority');
+      addLog('鸣潮优先级修改完成:');
+      result.split('\n').forEach(line => addLog(line));
+    } catch (error) {
+      addLog(`提高鸣潮优先级失败: ${error}`);
+    } finally {
+      setLoading(false);
+    }
+  }, [addLog]);
+
+  const raisePoe2Priority = useCallback(async () => {
+    try {
+      setLoading(true);
+      addLog('开始提高流放之路2优先级...');
+      const result = await invoke<string>('raise_poe2_priority');
+      addLog('流放之路2优先级修改完成:');
+      result.split('\n').forEach(line => addLog(line));
+    } catch (error) {
+      addLog(`提高流放之路2优先级失败: ${error}`);
+    } finally {
+      setLoading(false);
+    }
+  }, [addLog]);
 
 
   const checkRegistryPriority = useCallback(async () => {
@@ -886,86 +927,39 @@ function App() {
                 >
                   降低ACE优先级
                 </Button>
-                <Box display="grid" gridTemplateColumns="1fr 1fr" gap={0.4}>
-                  <Button
-                    variant="contained"
-                    onClick={raiseDeltaPriority}
-                    disabled={loading || !systemInfo?.is_admin}
-                    color="success"
-                    size="small"
-                    sx={{ py: 0.3, fontSize: '0.7rem', whiteSpace: 'nowrap' }}
-                  >
+                <Box display="grid" gridTemplateColumns="1fr 1fr 1fr" gap={0.4}>
+                  <Button variant="contained" onClick={raiseDeltaPriority} disabled={loading || !systemInfo?.is_admin} color="success" size="small" sx={{ py: 0.3, fontSize: '0.7rem', whiteSpace: 'nowrap' }}>
                     三角洲优化
                   </Button>
-                  <Button
-                    variant="contained"
-                    onClick={modifyValorantRegistryPriority}
-                    disabled={loading || !systemInfo?.is_admin}
-                    color="success"
-                    size="small"
-                    sx={{ py: 0.3, fontSize: '0.7rem', whiteSpace: 'nowrap' }}
-                  >
+                  <Button variant="contained" onClick={modifyValorantRegistryPriority} disabled={loading || !systemInfo?.is_admin} color="success" size="small" sx={{ py: 0.3, fontSize: '0.7rem', whiteSpace: 'nowrap' }}>
                     瓦罗兰特优化
                   </Button>
-                  <Button
-                    variant="contained"
-                    onClick={raiseLeaguePriority}
-                    disabled={loading || !systemInfo?.is_admin}
-                    color="success"
-                    size="small"
-                    sx={{ py: 0.3, fontSize: '0.7rem', whiteSpace: 'nowrap' }}
-                  >
+                  <Button variant="contained" onClick={raiseLeaguePriority} disabled={loading || !systemInfo?.is_admin} color="success" size="small" sx={{ py: 0.3, fontSize: '0.7rem', whiteSpace: 'nowrap' }}>
                     英雄联盟优化
                   </Button>
-                  <Button
-                    variant="contained"
-                    onClick={raiseArenaPriority}
-                    disabled={loading || !systemInfo?.is_admin}
-                    color="success"
-                    size="small"
-                    sx={{ py: 0.3, fontSize: '0.7rem', whiteSpace: 'nowrap' }}
-                  >
+                  <Button variant="contained" onClick={raiseArenaPriority} disabled={loading || !systemInfo?.is_admin} color="success" size="small" sx={{ py: 0.3, fontSize: '0.7rem', whiteSpace: 'nowrap' }}>
                     暗区突围优化
                   </Button>
-                  <Button
-                    variant="contained"
-                    onClick={raiseFinalsPriority}
-                    disabled={loading || !systemInfo?.is_admin}
-                    color="success"
-                    size="small"
-                    sx={{ py: 0.3, fontSize: '0.7rem', whiteSpace: 'nowrap' }}
-                  >
+                  <Button variant="contained" onClick={raiseFinalsPriority} disabled={loading || !systemInfo?.is_admin} color="success" size="small" sx={{ py: 0.3, fontSize: '0.7rem', whiteSpace: 'nowrap' }}>
                     终极角逐优化
                   </Button>
-                  <Button
-                    variant="contained"
-                    onClick={raiseNzfuturePriority}
-                    disabled={loading || !systemInfo?.is_admin}
-                    color="success"
-                    size="small"
-                    sx={{ py: 0.3, fontSize: '0.7rem', whiteSpace: 'nowrap' }}
-                  >
+                  <Button variant="contained" onClick={raiseNzfuturePriority} disabled={loading || !systemInfo?.is_admin} color="success" size="small" sx={{ py: 0.3, fontSize: '0.7rem', whiteSpace: 'nowrap' }}>
                     逆战未来优化
                   </Button>
-                  <Button
-                    variant="contained"
-                    onClick={raiseCrossfirePriority}
-                    disabled={loading || !systemInfo?.is_admin}
-                    color="success"
-                    size="small"
-                    sx={{ py: 0.3, fontSize: '0.7rem', whiteSpace: 'nowrap' }}
-                  >
+                  <Button variant="contained" onClick={raiseCrossfirePriority} disabled={loading || !systemInfo?.is_admin} color="success" size="small" sx={{ py: 0.3, fontSize: '0.7rem', whiteSpace: 'nowrap' }}>
                     穿越火线优化
                   </Button>
-                  <Button
-                    variant="contained"
-                    onClick={raiseDnfPriority}
-                    disabled={loading || !systemInfo?.is_admin}
-                    color="success"
-                    size="small"
-                    sx={{ py: 0.3, fontSize: '0.7rem', whiteSpace: 'nowrap' }}
-                  >
-                    地下城与勇士优化
+                  <Button variant="contained" onClick={raiseDnfPriority} disabled={loading || !systemInfo?.is_admin} color="success" size="small" sx={{ py: 0.3, fontSize: '0.7rem', whiteSpace: 'nowrap' }}>
+                    地下城勇士优化
+                  </Button>
+                  <Button variant="contained" onClick={raiseRocoworldPriority} disabled={loading || !systemInfo?.is_admin} color="success" size="small" sx={{ py: 0.3, fontSize: '0.7rem', whiteSpace: 'nowrap' }}>
+                    洛克王国优化
+                  </Button>
+                  <Button variant="contained" onClick={raiseWutheringwavesPriority} disabled={loading || !systemInfo?.is_admin} color="success" size="small" sx={{ py: 0.3, fontSize: '0.7rem', whiteSpace: 'nowrap' }}>
+                    鸣潮优化
+                  </Button>
+                  <Button variant="contained" onClick={raisePoe2Priority} disabled={loading || !systemInfo?.is_admin} color="success" size="small" sx={{ py: 0.3, fontSize: '0.7rem', whiteSpace: 'nowrap' }}>
+                    流放之路2优化
                   </Button>
                 </Box>
                 <Box display="flex" gap={0.4}>
