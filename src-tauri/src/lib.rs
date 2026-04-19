@@ -663,17 +663,41 @@ async fn get_webview2_environment() -> String {
     }
 }
 
+fn get_cpu_model_from_registry() -> Option<String> {
+    #[cfg(target_os = "windows")]
+    {
+        let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+        let cpu_key = hklm
+            .open_subkey(r"HARDWARE\DESCRIPTION\System\CentralProcessor\0")
+            .ok()?;
+
+        return cpu_key
+            .get_value::<String, _>("ProcessorNameString")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        None
+    }
+}
+
 #[tauri::command]
 async fn get_system_info() -> SystemInfo {
     let mut system = System::new();
     system.refresh_cpu_specifics(sysinfo::CpuRefreshKind::everything());
     system.refresh_memory();
 
-    let cpu_model = if let Some(cpu) = system.cpus().first() {
-        cpu.brand().to_string()
-    } else {
-        "Unknown".to_string()
-    };
+    let cpu_model = system
+        .cpus()
+        .first()
+        .map(|cpu| cpu.brand().trim())
+        .filter(|brand| !brand.is_empty())
+        .map(|brand| brand.to_string())
+        .or_else(get_cpu_model_from_registry)
+        .unwrap_or_else(|| "Unknown".to_string());
 
     let cpu_cores = system.physical_core_count().unwrap_or(0);
     let cpu_logical_cores = system.cpus().len();
@@ -835,27 +859,11 @@ fn get_exe_path() -> Result<String, String> {
 
 #[tauri::command]
 async fn enable_autostart() -> Result<String, String> {
+    if !is_elevated() {
+        return Err("需要管理员权限才能设置开机以管理员自启动".to_string());
+    }
+
     let exe_path = get_exe_path()?;
-
-    // 清理旧的计划任务（如果存在）
-    let _ = std::process::Command::new("schtasks")
-        .args(["/delete", "/tn", "FuckACE_AutoStart", "/f"])
-        .output();
-
-    let hkcu = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER);
-    let (key, _) = hkcu
-        .create_subkey(r"Software\Microsoft\Windows\CurrentVersion\Run")
-        .map_err(|e| format!("打开注册表失败: {}", e))?;
-
-    key.set_value("FuckACE", &format!("\"{}\"" , exe_path))
-        .map_err(|e| format!("写入注册表失败: {}", e))?;
-
-    Ok("开机自启动已启用（启动后需手动以管理员运行以使用完整功能）".to_string())
-}
-
-#[tauri::command]
-async fn disable_autostart() -> Result<String, String> {
-    // 清理旧的计划任务（如果存在）
     let _ = std::process::Command::new("schtasks")
         .args(["/delete", "/tn", "FuckACE_AutoStart", "/f"])
         .output();
@@ -868,20 +876,72 @@ async fn disable_autostart() -> Result<String, String> {
         let _ = key.delete_value("FuckACE");
     }
 
-    Ok("开机自启动已禁用".to_string())
+    let final_path = if std::path::Path::new(&exe_path).exists() {
+        exe_path
+    } else {
+        let current_dir = std::env::current_dir().map_err(|e| format!("获取当前目录失败: {}", e))?;
+        let exe_name = std::path::Path::new(&exe_path)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .ok_or_else(|| "无法获取可执行文件名".to_string())?;
+
+        current_dir.join(exe_name).to_string_lossy().to_string()
+    };
+
+    let status = std::process::Command::new("schtasks")
+        .args([
+            "/create",
+            "/tn",
+            "FuckACE_AutoStart",
+            "/tr",
+            &format!("\"{}\"", final_path),
+            "/rl",
+            "HIGHEST",
+            "/sc",
+            "ONLOGON",
+            "/f",
+        ])
+        .status()
+        .map_err(|e| format!("执行命令失败: {}", e))?;
+
+    if status.success() {
+        Ok("开机管理员自启动已启用".to_string())
+    } else {
+        Err("设置计划任务失败".to_string())
+    }
+}
+
+#[tauri::command]
+async fn disable_autostart() -> Result<String, String> {
+    if !is_elevated() {
+        return Err("需要管理员权限才能取消开机自启".to_string());
+    }
+
+    // 清理旧的计划任务（如果存在）
+    let status = std::process::Command::new("schtasks")
+        .args(["/delete", "/tn", "FuckACE_AutoStart", "/f"])
+        .status()
+        .map_err(|e| format!("执行命令失败: {}", e))?;
+
+    let hkcu = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER);
+    if let Ok(key) = hkcu.open_subkey_with_flags(
+        r"Software\Microsoft\Windows\CurrentVersion\Run",
+        winreg::enums::KEY_WRITE,
+    ) {
+        let _ = key.delete_value("FuckACE");
+    }
+
+    if status.success() {
+        Ok("开机管理员自启动已禁用".to_string())
+    } else {
+        Ok("开机管理员自启动已禁用或未曾启用".to_string())
+    }
 }
 
 #[tauri::command]
 async fn check_autostart() -> Result<bool, String> {
-    let hkcu = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER);
-    if let Ok(key) = hkcu.open_subkey(r"Software\Microsoft\Windows\CurrentVersion\Run") {
-        let val: Result<String, _> = key.get_value("FuckACE");
-        Ok(val.is_ok())
-    } else {
-        // 兼容旧版：检查是否有计划任务残留
-        let task_path = std::path::Path::new("C:\\Windows\\System32\\Tasks\\FuckACE_AutoStart");
-        Ok(task_path.exists())
-    }
+    let task_path = std::path::Path::new("C:\\Windows\\System32\\Tasks\\FuckACE_AutoStart");
+    Ok(task_path.exists())
 }
 
 #[tauri::command]
