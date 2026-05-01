@@ -417,6 +417,9 @@ function App() {
           darkMode={darkMode}
           onOpenAnnouncements={() => setShowAnnouncements(true)}
           onOpenUpdates={() => setShowUpdateDialog(true)}
+          onOpenBilibiliHome={() => {
+            void openExternalLink('https://space.bilibili.com/309820452');
+          }}
           onOpenRepository={() => {
             void openExternalLink('https://github.com/shshouse/FuckACE');
           }}

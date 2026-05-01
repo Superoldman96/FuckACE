@@ -40,6 +40,9 @@ struct ProcessPerformance {
 
 struct AppState;
 
+const AUTOSTART_ELEVATE_ARG: &str = "--fuckace-autostart-elevate";
+const ELEVATED_AUTOSTART_ARG: &str = "--fuckace-elevated-autostart";
+
 fn find_target_core() -> (u32, u64, bool) {
     let system = System::new_all();
     let total_cores = system.cpus().len() as u32;
@@ -637,6 +640,64 @@ fn is_elevated() -> bool {
     }
 }
 
+#[cfg(target_os = "windows")]
+fn to_wide_string(value: &str) -> Vec<u16> {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+
+    OsStr::new(value)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect()
+}
+
+#[cfg(target_os = "windows")]
+fn relaunch_autostart_as_admin() -> Result<(), String> {
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+    let exe_path = get_exe_path()?;
+    let operation = to_wide_string("runas");
+    let file = to_wide_string(&exe_path);
+    let parameters = to_wide_string(ELEVATED_AUTOSTART_ARG);
+
+    let result = unsafe {
+        ShellExecuteW(
+            HWND(std::ptr::null_mut()),
+            PCWSTR(operation.as_ptr()),
+            PCWSTR(file.as_ptr()),
+            PCWSTR(parameters.as_ptr()),
+            PCWSTR::null(),
+            SW_SHOWNORMAL,
+        )
+    };
+    let result_code = result.0 as isize;
+
+    if result_code <= 32 {
+        return Err(format!("请求管理员权限失败: {}", result_code));
+    }
+
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn handle_autostart_elevation() {
+    let args: Vec<String> = std::env::args().collect();
+    let should_elevate_from_autostart = args.iter().any(|arg| arg == AUTOSTART_ELEVATE_ARG)
+        && !args.iter().any(|arg| arg == ELEVATED_AUTOSTART_ARG)
+        && !is_elevated();
+
+    if should_elevate_from_autostart {
+        if let Err(error) = relaunch_autostart_as_admin() {
+            eprintln!("{}", error);
+        }
+
+        std::process::exit(0);
+    }
+}
+
 #[tauri::command]
 async fn get_webview2_environment() -> String {
     #[cfg(target_os = "windows")]
@@ -901,10 +962,13 @@ async fn enable_autostart() -> Result<String, String> {
         current_dir.join(exe_name).to_string_lossy().to_string()
     };
 
-    key.set_value("FuckACE", &format!("\"{}\"", final_path))
+    key.set_value(
+        "FuckACE",
+        &format!("\"{}\" {}", final_path, AUTOSTART_ELEVATE_ARG),
+    )
         .map_err(|e| format!("设置开机自启动失败: {}", e))?;
 
-    Ok("普通开机自启动已启用".to_string())
+    Ok("开机管理员弹窗自启动已启用".to_string())
 }
 
 #[tauri::command]
@@ -1651,6 +1715,9 @@ async fn save_report_to_desktop(image_base64: String, filename: String) -> Resul
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(target_os = "windows")]
+    handle_autostart_elevation();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             if let Some(window) = app.get_webview_window("main") {

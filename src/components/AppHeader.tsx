@@ -12,6 +12,7 @@ import {
   LightMode as LightModeIcon,
   Notifications as NotificationsIcon,
   SystemUpdate as UpdateIcon,
+  VideoLibrary as VideoLibraryIcon,
 } from '@mui/icons-material';
 
 interface AppHeaderProps {
@@ -21,6 +22,7 @@ interface AppHeaderProps {
   darkMode: boolean;
   onOpenAnnouncements: () => void;
   onOpenUpdates: () => void;
+  onOpenBilibiliHome: () => void | Promise<void>;
   onOpenRepository: () => void | Promise<void>;
   onToggleTheme: () => void;
 }
@@ -32,6 +34,7 @@ export function AppHeader({
   darkMode,
   onOpenAnnouncements,
   onOpenUpdates,
+  onOpenBilibiliHome,
   onOpenRepository,
   onToggleTheme,
 }: AppHeaderProps) {
@@ -77,6 +80,16 @@ export function AppHeader({
               更新
             </Button>
           </Badge>
+          <Button
+            variant="outlined"
+            startIcon={<VideoLibraryIcon />}
+            onClick={onOpenBilibiliHome}
+            sx={{ minWidth: 'auto', px: 0.8 }}
+            size="small"
+            color="secondary"
+          >
+            B站主页
+          </Button>
           <Button
             variant="outlined"
             startIcon={<GitHubIcon />}
