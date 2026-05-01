@@ -857,29 +857,42 @@ fn get_exe_path() -> Result<String, String> {
         .map(|s| s.to_string())
 }
 
+fn legacy_autostart_task_exists() -> bool {
+    std::path::Path::new("C:\\Windows\\System32\\Tasks\\FuckACE_AutoStart").exists()
+}
+
+fn delete_legacy_autostart_task() -> bool {
+    std::process::Command::new("schtasks")
+        .args(["/delete", "/tn", "FuckACE_AutoStart", "/f"])
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
 #[tauri::command]
 async fn enable_autostart() -> Result<String, String> {
-    if !is_elevated() {
-        return Err("需要管理员权限才能设置开机以管理员自启动".to_string());
-    }
-
     let exe_path = get_exe_path()?;
-    let _ = std::process::Command::new("schtasks")
-        .args(["/delete", "/tn", "FuckACE_AutoStart", "/f"])
-        .output();
+    let _ = delete_legacy_autostart_task();
+
+    if legacy_autostart_task_exists() {
+        return Err(
+            "检测到旧管理员自启动计划任务，请以管理员身份运行后重新开启以完成清理".to_string(),
+        );
+    }
 
     let hkcu = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER);
-    if let Ok(key) = hkcu.open_subkey_with_flags(
-        r"Software\Microsoft\Windows\CurrentVersion\Run",
-        winreg::enums::KEY_WRITE,
-    ) {
-        let _ = key.delete_value("FuckACE");
-    }
+    let key = hkcu
+        .open_subkey_with_flags(
+            r"Software\Microsoft\Windows\CurrentVersion\Run",
+            winreg::enums::KEY_WRITE,
+        )
+        .map_err(|e| format!("打开开机自启动注册表失败: {}", e))?;
 
     let final_path = if std::path::Path::new(&exe_path).exists() {
         exe_path
     } else {
-        let current_dir = std::env::current_dir().map_err(|e| format!("获取当前目录失败: {}", e))?;
+        let current_dir =
+            std::env::current_dir().map_err(|e| format!("获取当前目录失败: {}", e))?;
         let exe_name = std::path::Path::new(&exe_path)
             .file_name()
             .and_then(|s| s.to_str())
@@ -888,40 +901,16 @@ async fn enable_autostart() -> Result<String, String> {
         current_dir.join(exe_name).to_string_lossy().to_string()
     };
 
-    let status = std::process::Command::new("schtasks")
-        .args([
-            "/create",
-            "/tn",
-            "FuckACE_AutoStart",
-            "/tr",
-            &format!("\"{}\"", final_path),
-            "/rl",
-            "HIGHEST",
-            "/sc",
-            "ONLOGON",
-            "/f",
-        ])
-        .status()
-        .map_err(|e| format!("执行命令失败: {}", e))?;
+    key.set_value("FuckACE", &format!("\"{}\"", final_path))
+        .map_err(|e| format!("设置开机自启动失败: {}", e))?;
 
-    if status.success() {
-        Ok("开机管理员自启动已启用".to_string())
-    } else {
-        Err("设置计划任务失败".to_string())
-    }
+    Ok("普通开机自启动已启用".to_string())
 }
 
 #[tauri::command]
 async fn disable_autostart() -> Result<String, String> {
-    if !is_elevated() {
-        return Err("需要管理员权限才能取消开机自启".to_string());
-    }
-
     // 清理旧的计划任务（如果存在）
-    let status = std::process::Command::new("schtasks")
-        .args(["/delete", "/tn", "FuckACE_AutoStart", "/f"])
-        .status()
-        .map_err(|e| format!("执行命令失败: {}", e))?;
+    let _ = delete_legacy_autostart_task();
 
     let hkcu = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER);
     if let Ok(key) = hkcu.open_subkey_with_flags(
@@ -931,17 +920,26 @@ async fn disable_autostart() -> Result<String, String> {
         let _ = key.delete_value("FuckACE");
     }
 
-    if status.success() {
-        Ok("开机管理员自启动已禁用".to_string())
+    if legacy_autostart_task_exists() {
+        Ok("普通开机自启动已禁用；旧管理员自启动需要以管理员身份运行后再次关闭".to_string())
     } else {
-        Ok("开机管理员自启动已禁用或未曾启用".to_string())
+        Ok("开机自启动已禁用".to_string())
     }
 }
 
 #[tauri::command]
 async fn check_autostart() -> Result<bool, String> {
-    let task_path = std::path::Path::new("C:\\Windows\\System32\\Tasks\\FuckACE_AutoStart");
-    Ok(task_path.exists())
+    let hkcu = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER);
+    let registry_enabled = hkcu
+        .open_subkey_with_flags(
+            r"Software\Microsoft\Windows\CurrentVersion\Run",
+            winreg::enums::KEY_READ,
+        )
+        .ok()
+        .and_then(|key| key.get_value::<String, _>("FuckACE").ok())
+        .is_some();
+
+    Ok(registry_enabled || legacy_autostart_task_exists())
 }
 
 #[tauri::command]
