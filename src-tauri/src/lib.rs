@@ -1441,6 +1441,86 @@ async fn raise_poe2_priority() -> Result<String, String> {
 }
 
 #[tauri::command]
+async fn raise_division2_priority() -> Result<String, String> {
+    if !is_elevated() {
+        return Err("需要管理员权限才能修改注册表".to_string());
+    }
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    let base_path = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options";
+    let mut results = Vec::new();
+    let configs = vec![("TheDivision2.exe", 3u32, 3u32)];
+
+    for (exe_name, cpu_priority, io_priority) in configs {
+        let key_path = format!(r"{}\{}\PerfOptions", base_path, exe_name);
+
+        match hklm.create_subkey(&key_path) {
+            Ok((key, _)) => {
+                let mut success = true;
+                if let Err(e) = key.set_value("CpuPriorityClass", &cpu_priority) {
+                    results.push(format!("{}:设置CPU优先级失败:{}", exe_name, e));
+                    success = false;
+                }
+                if let Err(e) = key.set_value("IoPriority", &io_priority) {
+                    results.push(format!("{}:设置I/O优先级失败:{}", exe_name, e));
+                    success = false;
+                }
+                if success {
+                    results.push(format!(
+                        "{}:设置成功(CPU:{},I/O:{})",
+                        exe_name, cpu_priority, io_priority
+                    ));
+                }
+            }
+            Err(e) => {
+                results.push(format!("{}:创建注册表项失败:{}", exe_name, e));
+            }
+        }
+    }
+
+    Ok(results.join("\n"))
+}
+
+#[tauri::command]
+async fn raise_endfield_priority() -> Result<String, String> {
+    if !is_elevated() {
+        return Err("需要管理员权限才能修改注册表".to_string());
+    }
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    let base_path = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options";
+    let mut results = Vec::new();
+    let configs = vec![("Endfield.exe", 3u32, 3u32)];
+
+    for (exe_name, cpu_priority, io_priority) in configs {
+        let key_path = format!(r"{}\{}\PerfOptions", base_path, exe_name);
+
+        match hklm.create_subkey(&key_path) {
+            Ok((key, _)) => {
+                let mut success = true;
+                if let Err(e) = key.set_value("CpuPriorityClass", &cpu_priority) {
+                    results.push(format!("{}:设置CPU优先级失败:{}", exe_name, e));
+                    success = false;
+                }
+                if let Err(e) = key.set_value("IoPriority", &io_priority) {
+                    results.push(format!("{}:设置I/O优先级失败:{}", exe_name, e));
+                    success = false;
+                }
+                if success {
+                    results.push(format!(
+                        "{}:设置成功(CPU:{},I/O:{})",
+                        exe_name, cpu_priority, io_priority
+                    ));
+                }
+            }
+            Err(e) => {
+                results.push(format!("{}:创建注册表项失败:{}", exe_name, e));
+            }
+        }
+    }
+
+    Ok(results.join("\n"))
+}
+
+#[tauri::command]
 async fn check_registry_priority() -> Result<String, String> {
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
     let base_path = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options";
@@ -1461,6 +1541,8 @@ async fn check_registry_priority() -> Result<String, String> {
         "NRC-Win64-Shipping.exe",
         "Client-Win64-Shipping.exe",
         "PathOfExileSteam.exe",
+        "TheDivision2.exe",
+        "Endfield.exe",
     ];
 
     for exe_name in exe_names {
@@ -1517,6 +1599,8 @@ async fn reset_registry_priority() -> Result<String, String> {
         "NRC-Win64-Shipping.exe",
         "Client-Win64-Shipping.exe",
         "PathOfExileSteam.exe",
+        "TheDivision2.exe",
+        "Endfield.exe",
     ];
 
     for exe_name in exe_names {
@@ -1618,6 +1702,8 @@ pub fn run() {
             raise_rocoworld_priority,
             raise_wutheringwaves_priority,
             raise_poe2_priority,
+            raise_division2_priority,
+            raise_endfield_priority,
 
         ])
         .run(tauri::generate_context!())

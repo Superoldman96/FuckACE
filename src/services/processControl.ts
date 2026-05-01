@@ -136,6 +136,22 @@ export const gameOptimizationActions: GameOptimizationAction[] = [
     successMessage: '流放之路2优先级修改完成:',
     errorMessage: '提高流放之路2优先级失败',
   },
+  {
+    id: 'division2',
+    label: '全境封锁2优化',
+    command: 'raise_division2_priority',
+    startMessage: '开始提高全境封锁2优先级...',
+    successMessage: '全境封锁2优先级修改完成:',
+    errorMessage: '提高全境封锁2优先级失败',
+  },
+  {
+    id: 'endfield',
+    label: '终末地优化',
+    command: 'raise_endfield_priority',
+    startMessage: '开始提高终末地优先级...',
+    successMessage: '终末地优先级修改完成:',
+    errorMessage: '提高终末地优先级失败',
+  },
 ];
 
 export async function getSystemInfo() {
