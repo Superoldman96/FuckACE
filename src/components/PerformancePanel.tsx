@@ -58,7 +58,7 @@ export function PerformancePanel({
     <Paper elevation={2} sx={{ p: 1.5, flex: 2, minWidth: 0, maxWidth: '100%' }}>
       <Box display="flex" justifyContent="space-between" alignItems="center" sx={{ mb: 0.5 }}>
         <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
-          实时监控
+          ACE实时监控
         </Typography>
         <Button
           variant="outlined"

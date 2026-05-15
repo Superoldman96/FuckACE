@@ -40,8 +40,7 @@ struct ProcessPerformance {
 
 struct AppState;
 
-const AUTOSTART_ELEVATE_ARG: &str = "--fuckace-autostart-elevate";
-const ELEVATED_AUTOSTART_ARG: &str = "--fuckace-elevated-autostart";
+const TASK_NAME: &str = "FuckACE_AutoStart";
 
 fn find_target_core() -> (u32, u64, bool) {
     let system = System::new_all();
@@ -640,61 +639,114 @@ fn is_elevated() -> bool {
     }
 }
 
-#[cfg(target_os = "windows")]
-fn to_wide_string(value: &str) -> Vec<u16> {
-    use std::ffi::OsStr;
-    use std::os::windows::ffi::OsStrExt;
-
-    OsStr::new(value)
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect()
-}
 
 #[cfg(target_os = "windows")]
-fn relaunch_autostart_as_admin() -> Result<(), String> {
-    use windows::core::PCWSTR;
-    use windows::Win32::Foundation::HWND;
-    use windows::Win32::UI::Shell::ShellExecuteW;
-    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+fn create_autostart_task(exe_path: &str) -> Result<(), String> {
+    let working_dir = std::path::Path::new(exe_path)
+        .parent()
+        .ok_or_else(|| "无法获取程序所在目录".to_string())?
+        .to_string_lossy()
+        .to_string();
 
-    let exe_path = get_exe_path()?;
-    let operation = to_wide_string("runas");
-    let file = to_wide_string(&exe_path);
-    let parameters = to_wide_string(ELEVATED_AUTOSTART_ARG);
+    let xml = format!(
+        r#"<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>FuckACE Auto Start</Description>
+  </RegistrationInfo>
+  <Triggers>
+    <LogonTrigger>
+      <Enabled>true</Enabled>
+      <Delay>PT10S</Delay>
+    </LogonTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>HighestAvailable</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>false</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <RunOnlyIfIdle>false</RunOnlyIfIdle>
+    <WakeToRun>false</WakeToRun>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <Priority>7</Priority>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>{}</Command>
+      <Arguments>--autostart</Arguments>
+      <WorkingDirectory>{}</WorkingDirectory>
+    </Exec>
+  </Actions>
+</Task>"#,
+        exe_path, working_dir
+    );
 
-    let result = unsafe {
-        ShellExecuteW(
-            HWND(std::ptr::null_mut()),
-            PCWSTR(operation.as_ptr()),
-            PCWSTR(file.as_ptr()),
-            PCWSTR(parameters.as_ptr()),
-            PCWSTR::null(),
-            SW_SHOWNORMAL,
-        )
-    };
-    let result_code = result.0 as isize;
+    let temp_dir = std::env::temp_dir();
+    let xml_path = temp_dir.join("fuckace_task.xml");
+    std::fs::write(&xml_path, xml.as_bytes())
+        .map_err(|e| format!("写入任务XML失败: {}", e))?;
 
-    if result_code <= 32 {
-        return Err(format!("请求管理员权限失败: {}", result_code));
+    let xml_path_str = xml_path.to_string_lossy().to_string();
+
+    let output = std::process::Command::new("schtasks")
+        .args([
+            "/create",
+            "/tn",
+            TASK_NAME,
+            "/xml",
+            &xml_path_str,
+            "/f",
+        ])
+        .output()
+        .map_err(|e| format!("执行schtasks失败: {}", e))?;
+
+    let _ = std::fs::remove_file(&xml_path);
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(format!("创建计划任务失败: {}", stderr.trim()))
     }
-
-    Ok(())
 }
 
 #[cfg(target_os = "windows")]
-fn handle_autostart_elevation() {
-    let args: Vec<String> = std::env::args().collect();
-    let should_elevate_from_autostart = args.iter().any(|arg| arg == AUTOSTART_ELEVATE_ARG)
-        && !args.iter().any(|arg| arg == ELEVATED_AUTOSTART_ARG)
-        && !is_elevated();
+fn delete_autostart_task() -> bool {
+    std::process::Command::new("schtasks")
+        .args(["/delete", "/tn", TASK_NAME, "/f"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
 
-    if should_elevate_from_autostart {
-        if let Err(error) = relaunch_autostart_as_admin() {
-            eprintln!("{}", error);
-        }
+#[cfg(target_os = "windows")]
+fn autostart_task_exists() -> bool {
+    std::process::Command::new("schtasks")
+        .args(["/query", "/tn", TASK_NAME])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
 
-        std::process::exit(0);
+#[cfg(target_os = "windows")]
+fn cleanup_legacy_registry_autostart() {
+    let hkcu = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER);
+    if let Ok(key) = hkcu.open_subkey_with_flags(
+        r"Software\Microsoft\Windows\CurrentVersion\Run",
+        winreg::enums::KEY_WRITE,
+    ) {
+        let _ = key.delete_value("FuckACE");
     }
 }
 
@@ -858,7 +910,10 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
                 let app = tray.app_handle();
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.show();
+                    let _ = window.unminimize();
+                    let _ = window.set_always_on_top(true);
                     let _ = window.set_focus();
+                    let _ = window.set_always_on_top(false);
                 }
             }
             TrayIconEvent::DoubleClick {
@@ -868,7 +923,10 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
                 let app = tray.app_handle();
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.show();
+                    let _ = window.unminimize();
+                    let _ = window.set_always_on_top(true);
                     let _ = window.set_focus();
+                    let _ = window.set_always_on_top(false);
                 }
             }
             _ => {}
@@ -880,7 +938,10 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
             "show" => {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.show();
+                    let _ = window.unminimize();
+                    let _ = window.set_always_on_top(true);
                     let _ = window.set_focus();
+                    let _ = window.set_always_on_top(false);
                 }
             }
             "hide" => {
@@ -918,92 +979,32 @@ fn get_exe_path() -> Result<String, String> {
         .map(|s| s.to_string())
 }
 
-fn legacy_autostart_task_exists() -> bool {
-    std::path::Path::new("C:\\Windows\\System32\\Tasks\\FuckACE_AutoStart").exists()
-}
-
-fn delete_legacy_autostart_task() -> bool {
-    std::process::Command::new("schtasks")
-        .args(["/delete", "/tn", "FuckACE_AutoStart", "/f"])
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
-}
-
 #[tauri::command]
 async fn enable_autostart() -> Result<String, String> {
-    let exe_path = get_exe_path()?;
-    let _ = delete_legacy_autostart_task();
-
-    if legacy_autostart_task_exists() {
-        return Err(
-            "检测到旧管理员自启动计划任务，请以管理员身份运行后重新开启以完成清理".to_string(),
-        );
+    if !is_elevated() {
+        return Err("需要管理员权限才能创建开机自启动计划任务".to_string());
     }
 
-    let hkcu = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER);
-    let key = hkcu
-        .open_subkey_with_flags(
-            r"Software\Microsoft\Windows\CurrentVersion\Run",
-            winreg::enums::KEY_WRITE,
-        )
-        .map_err(|e| format!("打开开机自启动注册表失败: {}", e))?;
+    let exe_path = get_exe_path()?;
 
-    let final_path = if std::path::Path::new(&exe_path).exists() {
-        exe_path
-    } else {
-        let current_dir =
-            std::env::current_dir().map_err(|e| format!("获取当前目录失败: {}", e))?;
-        let exe_name = std::path::Path::new(&exe_path)
-            .file_name()
-            .and_then(|s| s.to_str())
-            .ok_or_else(|| "无法获取可执行文件名".to_string())?;
+    cleanup_legacy_registry_autostart();
 
-        current_dir.join(exe_name).to_string_lossy().to_string()
-    };
+    create_autostart_task(&exe_path)?;
 
-    key.set_value(
-        "FuckACE",
-        &format!("\"{}\" {}", final_path, AUTOSTART_ELEVATE_ARG),
-    )
-        .map_err(|e| format!("设置开机自启动失败: {}", e))?;
-
-    Ok("开机管理员弹窗自启动已启用".to_string())
+    Ok("开机静默管理员自启动已启用".to_string())
 }
 
 #[tauri::command]
 async fn disable_autostart() -> Result<String, String> {
-    // 清理旧的计划任务（如果存在）
-    let _ = delete_legacy_autostart_task();
+    cleanup_legacy_registry_autostart();
+    delete_autostart_task();
 
-    let hkcu = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER);
-    if let Ok(key) = hkcu.open_subkey_with_flags(
-        r"Software\Microsoft\Windows\CurrentVersion\Run",
-        winreg::enums::KEY_WRITE,
-    ) {
-        let _ = key.delete_value("FuckACE");
-    }
-
-    if legacy_autostart_task_exists() {
-        Ok("普通开机自启动已禁用；旧管理员自启动需要以管理员身份运行后再次关闭".to_string())
-    } else {
-        Ok("开机自启动已禁用".to_string())
-    }
+    Ok("开机自启动已禁用".to_string())
 }
 
 #[tauri::command]
 async fn check_autostart() -> Result<bool, String> {
-    let hkcu = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER);
-    let registry_enabled = hkcu
-        .open_subkey_with_flags(
-            r"Software\Microsoft\Windows\CurrentVersion\Run",
-            winreg::enums::KEY_READ,
-        )
-        .ok()
-        .and_then(|key| key.get_value::<String, _>("FuckACE").ok())
-        .is_some();
-
-    Ok(registry_enabled || legacy_autostart_task_exists())
+    Ok(autostart_task_exists())
 }
 
 #[tauri::command]
@@ -1686,6 +1687,240 @@ async fn reset_registry_priority() -> Result<String, String> {
     Ok(results.join("\n"))
 }
 
+fn enable_privilege(privilege_name: &str) -> bool {
+    unsafe {
+        use windows::core::PCWSTR;
+        use windows::Win32::Foundation::{CloseHandle, LUID};
+        use windows::Win32::Security::{
+            AdjustTokenPrivileges, LookupPrivilegeValueW, LUID_AND_ATTRIBUTES,
+            SE_PRIVILEGE_ENABLED, TOKEN_ADJUST_PRIVILEGES, TOKEN_PRIVILEGES,
+        };
+        use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+        let mut token_handle = windows::Win32::Foundation::HANDLE::default();
+        if OpenProcessToken(
+            GetCurrentProcess(),
+            TOKEN_ADJUST_PRIVILEGES,
+            &mut token_handle,
+        )
+        .is_err()
+        {
+            return false;
+        }
+
+        let mut luid = LUID::default();
+        let priv_wide: Vec<u16> = privilege_name
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
+
+        if LookupPrivilegeValueW(PCWSTR::null(), PCWSTR(priv_wide.as_ptr()), &mut luid).is_err() {
+            let _ = CloseHandle(token_handle);
+            return false;
+        }
+
+        let mut tp = TOKEN_PRIVILEGES {
+            PrivilegeCount: 1,
+            Privileges: [LUID_AND_ATTRIBUTES {
+                Luid: luid,
+                Attributes: SE_PRIVILEGE_ENABLED,
+            }],
+        };
+
+        let result = AdjustTokenPrivileges(token_handle, false, Some(&mut tp), 0, None, None);
+        let _ = CloseHandle(token_handle);
+        result.is_ok()
+    }
+}
+
+fn empty_all_working_sets() -> (usize, usize) {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+        TH32CS_SNAPPROCESS,
+    };
+    use windows::Win32::System::ProcessStatus::EmptyWorkingSet;
+    use windows::Win32::System::Threading::{
+        OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_SET_QUOTA,
+    };
+
+    let mut total = 0usize;
+    let mut success = 0usize;
+
+    unsafe {
+        let snapshot = match CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) {
+            Ok(s) => s,
+            Err(_) => return (0, 0),
+        };
+
+        if snapshot.is_invalid() {
+            return (0, 0);
+        }
+
+        let mut entry: PROCESSENTRY32W = std::mem::zeroed();
+        entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+
+        if Process32FirstW(snapshot, &mut entry).is_ok() {
+            loop {
+                total += 1;
+                let pid = entry.th32ProcessID;
+
+                if pid != 0 {
+                    if let Ok(handle) = OpenProcess(
+                        PROCESS_QUERY_INFORMATION | PROCESS_SET_QUOTA,
+                        false,
+                        pid,
+                    ) {
+                        if !handle.is_invalid() {
+                            if EmptyWorkingSet(handle).is_ok() {
+                                success += 1;
+                            }
+                            let _ = CloseHandle(handle);
+                        }
+                    }
+                }
+
+                if Process32NextW(snapshot, &mut entry).is_err() {
+                    break;
+                }
+            }
+        }
+
+        let _ = CloseHandle(snapshot);
+    }
+
+    (success, total)
+}
+
+fn purge_system_caches() -> Vec<String> {
+    use windows::core::PCSTR;
+    use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryA};
+
+    let mut messages = Vec::new();
+
+    unsafe {
+        let module = match LoadLibraryA(PCSTR(b"ntdll.dll\0".as_ptr())) {
+            Ok(m) => m,
+            Err(_) => {
+                messages.push("ntdll.dll加载失败".to_string());
+                return messages;
+            }
+        };
+
+        type NtSetSystemInformationFn =
+            unsafe extern "system" fn(u32, *mut std::ffi::c_void, u32) -> i32;
+
+        let proc_addr = GetProcAddress(module, PCSTR(b"NtSetSystemInformation\0".as_ptr()));
+        let nt_set_system_info: NtSetSystemInformationFn = match proc_addr {
+            Some(addr) => std::mem::transmute(addr),
+            None => {
+                messages.push("NtSetSystemInformation定位失败".to_string());
+                return messages;
+            }
+        };
+
+        const SYSTEM_MEMORY_LIST_INFORMATION: u32 = 80;
+        const MEMORY_EMPTY_WORKING_SETS: u32 = 2;
+        const MEMORY_FLUSH_MODIFIED_LIST: u32 = 3;
+        const MEMORY_PURGE_STANDBY_LIST: u32 = 4;
+
+        let commands = [
+            (MEMORY_EMPTY_WORKING_SETS, "系统工作集"),
+            (MEMORY_FLUSH_MODIFIED_LIST, "已修改页面"),
+            (MEMORY_PURGE_STANDBY_LIST, "待机列表"),
+        ];
+
+        for (cmd, label) in commands {
+            let mut command_value: u32 = cmd;
+            let status = nt_set_system_info(
+                SYSTEM_MEMORY_LIST_INFORMATION,
+                &mut command_value as *mut _ as *mut _,
+                std::mem::size_of::<u32>() as u32,
+            );
+
+            if status == 0 {
+                messages.push(format!("{}已清理", label));
+            } else {
+                messages.push(format!("{}清理失败(0x{:X})", label, status));
+            }
+        }
+    }
+
+    messages
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct MemoryCleanStatus {
+    memory_percent: f64,
+    used_memory_gb: f64,
+    total_memory_gb: f64,
+}
+
+#[tauri::command]
+async fn get_memory_clean_status() -> MemoryCleanStatus {
+    let mut system = System::new();
+    system.refresh_memory();
+
+    let total = system.total_memory() as f64;
+    let used = system.used_memory() as f64;
+    let memory_percent = if total > 0.0 { used / total * 100.0 } else { 0.0 };
+    let total_gb = total / 1024.0 / 1024.0 / 1024.0;
+    let used_gb = used / 1024.0 / 1024.0 / 1024.0;
+
+    MemoryCleanStatus {
+        memory_percent,
+        used_memory_gb: used_gb,
+        total_memory_gb: total_gb,
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct MemoryCleanResult {
+    memory_freed_mb: f64,
+    processes_trimmed: usize,
+    processes_total: usize,
+    messages: Vec<String>,
+}
+
+#[tauri::command]
+async fn clean_memory_and_temp() -> MemoryCleanResult {
+    enable_debug_privilege();
+    enable_privilege("SeProfileSingleProcessPrivilege");
+    enable_privilege("SeIncreaseQuotaPrivilege");
+
+    let mut system_before = System::new();
+    system_before.refresh_memory();
+    let used_before = system_before.used_memory();
+
+    let (trimmed, total_proc) = empty_all_working_sets();
+    let mut messages = vec![format!("已修剪 {}/{} 个进程工作集", trimmed, total_proc)];
+
+    if is_elevated() {
+        messages.extend(purge_system_caches());
+    } else {
+        messages.push("非管理员权限，已跳过系统级缓存清理".to_string());
+    }
+
+    std::thread::sleep(std::time::Duration::from_millis(400));
+
+    let mut system_after = System::new();
+    system_after.refresh_memory();
+    let used_after = system_after.used_memory();
+    let memory_freed_mb = if used_before > used_after {
+        (used_before - used_after) as f64 / 1024.0 / 1024.0
+    } else {
+        0.0
+    };
+    messages.push(format!("内存释放 {:.1} MB", memory_freed_mb));
+
+    MemoryCleanResult {
+        memory_freed_mb,
+        processes_trimmed: trimmed,
+        processes_total: total_proc,
+        messages,
+    }
+}
+
 #[tauri::command]
 async fn save_report_to_desktop(image_base64: String, filename: String) -> Result<String, String> {
     use base64::Engine;
@@ -1715,9 +1950,6 @@ async fn save_report_to_desktop(image_base64: String, filename: String) -> Resul
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    #[cfg(target_os = "windows")]
-    handle_autostart_elevation();
-
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             if let Some(window) = app.get_webview_window("main") {
@@ -1732,6 +1964,13 @@ pub fn run() {
         .manage(AppState)
         .setup(|app| {
             setup_tray(app.handle())?;
+            let args: Vec<String> = std::env::args().collect();
+            let is_autostart = args.iter().any(|a| a == "--autostart");
+            if !is_autostart {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.show();
+                }
+            }
             Ok(())
         })
         .on_window_event(|window, event| match event {
@@ -1769,6 +2008,8 @@ pub fn run() {
             raise_poe2_priority,
             raise_division2_priority,
             raise_endfield_priority,
+            get_memory_clean_status,
+            clean_memory_and_temp,
 
         ])
         .run(tauri::generate_context!())

@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { openUrl } from '@tauri-apps/plugin-opener';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { Box, Container, CssBaseline, ThemeProvider } from '@mui/material';
 import { ActiveActionsCard } from './components/ActiveActionsCard';
 import { AppHeader } from './components/AppHeader';
 import { FetchErrorSnackbar } from './components/FetchErrorSnackbar';
 import { LogPanel } from './components/LogPanel';
+import { MemoryCleanCard } from './components/MemoryCleanCard';
 import { PassiveActionsCard } from './components/PassiveActionsCard';
 import { PerformancePanel } from './components/PerformancePanel';
 import { RestrictionStatusCard } from './components/RestrictionStatusCard';
@@ -17,8 +19,10 @@ import {
   buildPerformancePoint,
   checkAutoStartStatus,
   checkRegistryPriorityCommand,
+  cleanMemoryAndTemp,
   executeTextCommand,
   gameOptimizationActions,
+  getMemoryCleanStatus,
   getProcessPerformance,
   getSystemInfo,
   hasAceProcess,
@@ -32,6 +36,7 @@ import { savePerformanceReport } from './services/report';
 import { darkTheme, lightTheme } from './theme/appTheme';
 import type {
   LogEntry,
+  MemoryCleanStatus,
   PerfDataPoint,
   ProcessPerformance,
   ProcessStatus,
@@ -73,6 +78,10 @@ function App() {
   const [showAnnouncements, setShowAnnouncements] = useState(false);
   const [showUpdateDialog, setShowUpdateDialog] = useState(false);
   const [exportingReport, setExportingReport] = useState(false);
+  const [memoryStatus, setMemoryStatus] = useState<MemoryCleanStatus | null>(null);
+  const [cleaning, setCleaning] = useState(false);
+  const [autoCleanEnabled, setAutoCleanEnabled] = useState(false);
+  const [autoCleanIntervalMinutes, setAutoCleanIntervalMinutes] = useState(10);
 
   const gameProcesses = performance.map((process) => process.name);
   const { announcements, latestVersion, hasUpdate, fetchError } = useInitialData(APP_VERSION);
@@ -189,6 +198,31 @@ function App() {
     }
   }, []);
 
+  const fetchMemoryStatus = useCallback(async () => {
+    try {
+      const status = await getMemoryCleanStatus();
+      setMemoryStatus(status);
+    } catch (error) {
+      console.error('获取内存状态失败:', error);
+    }
+  }, []);
+
+  const performCleanup = useCallback(async () => {
+    if (cleaning) return;
+    setCleaning(true);
+    addLog('开始清理内存...');
+    try {
+      const result = await cleanMemoryAndTemp();
+      result.messages.forEach((message) => addLog(message));
+      addLog(`清理完成，释放内存 ${result.memory_freed_mb.toFixed(1)} MB`);
+      await fetchMemoryStatus();
+    } catch (error) {
+      addLog(`内存清理失败: ${error}`);
+    } finally {
+      setCleaning(false);
+    }
+  }, [addLog, cleaning, fetchMemoryStatus]);
+
   const checkAutoStart = useCallback(async () => {
     try {
       const enabled = await checkAutoStartStatus();
@@ -283,15 +317,21 @@ function App() {
     addLog('FuckACE已启动，开始法克ACE');
     void fetchSystemInfo();
     void checkAutoStart();
+    void fetchMemoryStatus();
 
     const perfInterval = setInterval(() => {
       void fetchPerformance();
     }, 5000);
 
+    const memoryStatusInterval = setInterval(() => {
+      void fetchMemoryStatus();
+    }, 5000);
+
     return () => {
       clearInterval(perfInterval);
+      clearInterval(memoryStatusInterval);
     };
-  }, [addLog, checkAutoStart, fetchPerformance, fetchSystemInfo]);
+  }, [addLog, checkAutoStart, fetchMemoryStatus, fetchPerformance, fetchSystemInfo]);
 
   useEffect(() => {
     const cachedChoices = storage.getChoices();
@@ -307,6 +347,13 @@ function App() {
         restrictionSettingSetters[key](value);
       }
     });
+
+    if (typeof cachedChoices.autoCleanEnabled === 'boolean') {
+      setAutoCleanEnabled(cachedChoices.autoCleanEnabled);
+    }
+    if (typeof cachedChoices.autoCleanIntervalMinutes === 'number') {
+      setAutoCleanIntervalMinutes(cachedChoices.autoCleanIntervalMinutes);
+    }
   }, []);
 
   useEffect(() => {
@@ -327,6 +374,27 @@ function App() {
     enableMemoryPriority,
     autoRestrict,
   ]);
+
+  useEffect(() => {
+    storage.saveChoices({
+      autoCleanEnabled,
+      autoCleanIntervalMinutes,
+      rememberChoices: true,
+    });
+  }, [autoCleanEnabled, autoCleanIntervalMinutes]);
+
+  useEffect(() => {
+    if (!autoCleanEnabled) return;
+
+    const intervalMs = Math.max(1, autoCleanIntervalMinutes) * 60 * 1000;
+    const timer = setInterval(() => {
+      void performCleanup();
+    }, intervalMs);
+
+    return () => {
+      clearInterval(timer);
+    };
+  }, [autoCleanEnabled, autoCleanIntervalMinutes, performCleanup]);
 
   useEffect(() => {
     if (!autoRestrict || hasAutoRestricted || !systemInfo?.is_admin) {
@@ -353,9 +421,14 @@ function App() {
     const aceFound = hasAceProcess(performance);
 
     if (!aceFound) {
+      if (hasAutoRestricted) {
+        addLog('ACE进程已关闭，显示窗口');
+        void getCurrentWindow().show();
+        void getCurrentWindow().setFocus();
+      }
       setHasAutoRestricted(false);
     }
-  }, [performance]);
+  }, [performance, hasAutoRestricted, addLog]);
 
   useEffect(() => {
     if (hasUpdate) {
@@ -433,7 +506,20 @@ function App() {
               exportingReport={exportingReport}
               onExportReport={generateReport}
             />
-            <SystemInfoCard systemInfo={systemInfo} />
+            <Box display="flex" flexDirection="column" gap={1} sx={{ flex: 1, minWidth: 0, maxWidth: '100%', overflow: 'hidden' }}>
+              <SystemInfoCard systemInfo={systemInfo} />
+              <MemoryCleanCard
+                status={memoryStatus}
+                cleaning={cleaning}
+                autoCleanEnabled={autoCleanEnabled}
+                autoCleanIntervalMinutes={autoCleanIntervalMinutes}
+                onAutoCleanToggle={setAutoCleanEnabled}
+                onAutoCleanIntervalChange={setAutoCleanIntervalMinutes}
+                onCleanNow={() => {
+                  void performCleanup();
+                }}
+              />
+            </Box>
           </Box>
 
           <Box display="flex" gap={1}>

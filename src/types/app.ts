@@ -50,3 +50,16 @@ export interface RestrictionSettings {
 }
 
 export type RestrictionSettingKey = keyof RestrictionSettings;
+
+export interface MemoryCleanStatus {
+  memory_percent: number;
+  used_memory_gb: number;
+  total_memory_gb: number;
+}
+
+export interface MemoryCleanResult {
+  memory_freed_mb: number;
+  processes_trimmed: number;
+  processes_total: number;
+  messages: string[];
+}

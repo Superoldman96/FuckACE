@@ -1,5 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import type {
+  MemoryCleanResult,
+  MemoryCleanStatus,
   PerfDataPoint,
   ProcessPerformance,
   ProcessStatus,
@@ -178,6 +180,14 @@ export async function setAutoStartState(enabled: boolean) {
 export async function executeTextCommand(command: LoggedCommandDefinition) {
   const output = await invoke<string>(command.command);
   return output.split('\n');
+}
+
+export async function getMemoryCleanStatus() {
+  return invoke<MemoryCleanStatus>('get_memory_clean_status');
+}
+
+export async function cleanMemoryAndTemp() {
+  return invoke<MemoryCleanResult>('clean_memory_and_temp');
 }
 
 export function hasAceProcess(performance: ProcessPerformance[]) {
