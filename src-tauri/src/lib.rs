@@ -1940,13 +1940,8 @@ async fn clean_memory_and_temp() -> MemoryCleanResult {
 #[tauri::command]
 async fn save_report_to_desktop(image_base64: String, filename: String) -> Result<String, String> {
     use base64::Engine;
-    use std::path::PathBuf;
 
-    let desktop = if let Ok(userprofile) = std::env::var("USERPROFILE") {
-        PathBuf::from(userprofile).join("Desktop")
-    } else {
-        return Err("无法获取桌面路径".to_string());
-    };
+    let desktop = get_desktop_path()?;
 
     if !desktop.exists() {
         return Err("桌面路径不存在".to_string());
@@ -1962,7 +1957,32 @@ async fn save_report_to_desktop(image_base64: String, filename: String) -> Resul
     Ok(file_path.to_string_lossy().to_string())
 }
 
+fn get_desktop_path() -> Result<std::path::PathBuf, String> {
+    use std::path::PathBuf;
 
+    unsafe {
+        use windows::Win32::System::Com::CoTaskMemFree;
+        use windows::Win32::UI::Shell::{FOLDERID_Desktop, SHGetKnownFolderPath, KF_FLAG_DEFAULT};
+
+        if let Ok(raw_path) = SHGetKnownFolderPath(&FOLDERID_Desktop, KF_FLAG_DEFAULT, None) {
+            let path = raw_path
+                .to_string()
+                .map(PathBuf::from)
+                .map_err(|error| format!("解析桌面路径失败: {}", error));
+            CoTaskMemFree(Some(raw_path.0 as *const _));
+
+            if path.is_ok() {
+                return path;
+            }
+        }
+    }
+
+    if let Ok(userprofile) = std::env::var("USERPROFILE") {
+        return Ok(PathBuf::from(userprofile).join("Desktop"));
+    }
+
+    Err("无法获取桌面路径".to_string())
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
