@@ -1,42 +1,26 @@
 import { useMemo } from 'react';
 import {
   RocketLaunch as RocketIcon,
-  Speed as SpeedIcon,
 } from '@mui/icons-material';
 import {
   Box,
   Button,
-  FormControl,
   LinearProgress,
-  MenuItem,
   Paper,
-  Select,
   Stack,
-  Switch,
   Typography,
 } from '@mui/material';
-import type { SelectChangeEvent } from '@mui/material';
 import type { MemoryCleanStatus } from '../types/app';
 
 interface MemoryCleanCardProps {
   status: MemoryCleanStatus | null;
   cleaning: boolean;
-  autoCleanEnabled: boolean;
-  autoCleanIntervalMinutes: number;
-  onAutoCleanToggle: (enabled: boolean) => void;
-  onAutoCleanIntervalChange: (minutes: number) => void;
   onCleanNow: () => void;
 }
-
-const intervalOptions = [5, 10, 30, 60];
 
 export function MemoryCleanCard({
   status,
   cleaning,
-  autoCleanEnabled,
-  autoCleanIntervalMinutes,
-  onAutoCleanToggle,
-  onAutoCleanIntervalChange,
   onCleanNow,
 }: MemoryCleanCardProps) {
   const memoryPercent = useMemo(() => {
@@ -47,10 +31,6 @@ export function MemoryCleanCard({
   const usedGb = status?.used_memory_gb ?? 0;
   const totalGb = status?.total_memory_gb ?? 0;
 
-  const handleIntervalChange = (event: SelectChangeEvent<number>) => {
-    onAutoCleanIntervalChange(Number(event.target.value));
-  };
-
   return (
     <Paper elevation={2} sx={{ p: 1, flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
       <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 0.3 }}>
@@ -60,33 +40,9 @@ export function MemoryCleanCard({
             内存清理
           </Typography>
         </Stack>
-        <Stack direction="row" spacing={0.5} alignItems="center">
-          <SpeedIcon sx={{ fontSize: 14 }} color={autoCleanEnabled ? 'primary' : 'disabled'} />
-          <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.65rem' }}>
-            定时
-          </Typography>
-          <Switch
-            size="small"
-            checked={autoCleanEnabled}
-            onChange={(event) => onAutoCleanToggle(event.target.checked)}
-            color="primary"
-            sx={{ transform: 'scale(0.8)' }}
-          />
-          <FormControl size="small" sx={{ minWidth: 65 }}>
-            <Select
-              value={autoCleanIntervalMinutes}
-              onChange={handleIntervalChange}
-              disabled={!autoCleanEnabled}
-              sx={{ fontSize: '0.65rem', '& .MuiSelect-select': { py: 0.2, px: 0.8 } }}
-            >
-              {intervalOptions.map((minutes) => (
-                <MenuItem key={minutes} value={minutes} sx={{ fontSize: '0.65rem' }}>
-                  {minutes}分钟
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-        </Stack>
+        <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.65rem' }}>
+          检测到游戏后自动清理一次
+        </Typography>
       </Stack>
 
       <Box sx={{ mb: 0.5 }}>

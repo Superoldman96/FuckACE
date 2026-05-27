@@ -80,8 +80,7 @@ function App() {
   const [exportingReport, setExportingReport] = useState(false);
   const [memoryStatus, setMemoryStatus] = useState<MemoryCleanStatus | null>(null);
   const [cleaning, setCleaning] = useState(false);
-  const [autoCleanEnabled, setAutoCleanEnabled] = useState(false);
-  const [autoCleanIntervalMinutes, setAutoCleanIntervalMinutes] = useState(10);
+  const [hasAutoCleanedForGame, setHasAutoCleanedForGame] = useState(false);
 
   const gameProcesses = performance.map((process) => process.name);
   const { announcements, latestVersion, hasUpdate, fetchError } = useInitialData(APP_VERSION);
@@ -348,12 +347,6 @@ function App() {
       }
     });
 
-    if (typeof cachedChoices.autoCleanEnabled === 'boolean') {
-      setAutoCleanEnabled(cachedChoices.autoCleanEnabled);
-    }
-    if (typeof cachedChoices.autoCleanIntervalMinutes === 'number') {
-      setAutoCleanIntervalMinutes(cachedChoices.autoCleanIntervalMinutes);
-    }
   }, []);
 
   useEffect(() => {
@@ -374,27 +367,6 @@ function App() {
     enableMemoryPriority,
     autoRestrict,
   ]);
-
-  useEffect(() => {
-    storage.saveChoices({
-      autoCleanEnabled,
-      autoCleanIntervalMinutes,
-      rememberChoices: true,
-    });
-  }, [autoCleanEnabled, autoCleanIntervalMinutes]);
-
-  useEffect(() => {
-    if (!autoCleanEnabled) return;
-
-    const intervalMs = Math.max(1, autoCleanIntervalMinutes) * 60 * 1000;
-    const timer = setInterval(() => {
-      void performCleanup();
-    }, intervalMs);
-
-    return () => {
-      clearInterval(timer);
-    };
-  }, [autoCleanEnabled, autoCleanIntervalMinutes, performCleanup]);
 
   useEffect(() => {
     if (!autoRestrict || hasAutoRestricted || !systemInfo?.is_admin) {
@@ -420,6 +392,12 @@ function App() {
   useEffect(() => {
     const aceFound = hasAceProcess(performance);
 
+    if (aceFound && !hasAutoCleanedForGame && !cleaning) {
+      setHasAutoCleanedForGame(true);
+      addLog('检测到游戏启动，自动执行一次内存清理...');
+      void performCleanup();
+    }
+
     if (!aceFound) {
       if (hasAutoRestricted) {
         addLog('ACE进程已关闭，显示窗口');
@@ -427,8 +405,9 @@ function App() {
         void getCurrentWindow().setFocus();
       }
       setHasAutoRestricted(false);
+      setHasAutoCleanedForGame(false);
     }
-  }, [performance, hasAutoRestricted, addLog]);
+  }, [addLog, cleaning, hasAutoCleanedForGame, hasAutoRestricted, performance, performCleanup]);
 
   useEffect(() => {
     if (hasUpdate) {
@@ -511,10 +490,6 @@ function App() {
               <MemoryCleanCard
                 status={memoryStatus}
                 cleaning={cleaning}
-                autoCleanEnabled={autoCleanEnabled}
-                autoCleanIntervalMinutes={autoCleanIntervalMinutes}
-                onAutoCleanToggle={setAutoCleanEnabled}
-                onAutoCleanIntervalChange={setAutoCleanIntervalMinutes}
                 onCleanNow={() => {
                   void performCleanup();
                 }}
