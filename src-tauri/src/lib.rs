@@ -641,13 +641,30 @@ fn is_elevated() -> bool {
 
 
 #[cfg(target_os = "windows")]
-fn create_autostart_task(exe_path: &str) -> Result<(), String> {
-    let working_dir = std::path::Path::new(exe_path)
-        .parent()
-        .ok_or_else(|| "无法获取程序所在目录".to_string())?
-        .to_string_lossy()
-        .to_string();
+fn escape_xml_text(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
 
+#[cfg(target_os = "windows")]
+fn write_utf16_xml(path: &std::path::Path, xml: &str) -> Result<(), std::io::Error> {
+    let mut bytes = Vec::with_capacity(2 + xml.len() * 2);
+    bytes.extend_from_slice(&[0xff, 0xfe]);
+
+    for unit in xml.encode_utf16() {
+        bytes.extend_from_slice(&unit.to_le_bytes());
+    }
+
+    std::fs::write(path, bytes)
+}
+
+#[cfg(target_os = "windows")]
+fn create_autostart_task(exe_path: &str) -> Result<(), String> {
+    let command = escape_xml_text(exe_path);
     let xml = format!(
         r#"<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
@@ -685,16 +702,15 @@ fn create_autostart_task(exe_path: &str) -> Result<(), String> {
     <Exec>
       <Command>{}</Command>
       <Arguments>--autostart</Arguments>
-      <WorkingDirectory>{}</WorkingDirectory>
     </Exec>
   </Actions>
 </Task>"#,
-        exe_path, working_dir
+        command
     );
 
     let temp_dir = std::env::temp_dir();
     let xml_path = temp_dir.join("fuckace_task.xml");
-    std::fs::write(&xml_path, xml.as_bytes())
+    write_utf16_xml(&xml_path, &xml)
         .map_err(|e| format!("写入任务XML失败: {}", e))?;
 
     let xml_path_str = xml_path.to_string_lossy().to_string();
