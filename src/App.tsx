@@ -80,6 +80,7 @@ function App() {
   const [exportingReport, setExportingReport] = useState(false);
   const [memoryStatus, setMemoryStatus] = useState<MemoryCleanStatus | null>(null);
   const [cleaning, setCleaning] = useState(false);
+  const [autoMemoryCleanOnGameStart, setAutoMemoryCleanOnGameStart] = useState(false);
   const [hasAutoCleanedForGame, setHasAutoCleanedForGame] = useState(false);
 
   const gameProcesses = performance.map((process) => process.name);
@@ -333,7 +334,9 @@ function App() {
   }, [addLog, checkAutoStart, fetchMemoryStatus, fetchPerformance, fetchSystemInfo]);
 
   useEffect(() => {
-    const cachedChoices = storage.getChoices();
+    const cachedChoices = storage.getChoices() as ReturnType<typeof storage.getChoices> & {
+      autoMemoryCleanOnGameStart?: boolean;
+    };
 
     if (!cachedChoices.rememberChoices) {
       return;
@@ -347,6 +350,9 @@ function App() {
       }
     });
 
+    if (typeof cachedChoices.autoMemoryCleanOnGameStart==='boolean'){
+      setAutoMemoryCleanOnGameStart(cachedChoices.autoMemoryCleanOnGameStart);
+    }
   }, []);
 
   useEffect(() => {
@@ -357,7 +363,10 @@ function App() {
       enableIoPriority,
       enableMemoryPriority,
       autoRestrict,
+      autoMemoryCleanOnGameStart,
       rememberChoices: true,
+    } as Parameters<typeof storage.saveChoices>[0] & {
+      autoMemoryCleanOnGameStart: boolean;
     });
   }, [
     enableCpuAffinity,
@@ -366,6 +375,7 @@ function App() {
     enableIoPriority,
     enableMemoryPriority,
     autoRestrict,
+    autoMemoryCleanOnGameStart,
   ]);
 
   useEffect(() => {
@@ -392,7 +402,7 @@ function App() {
   useEffect(() => {
     const aceFound = hasAceProcess(performance);
 
-    if (aceFound && !hasAutoCleanedForGame && !cleaning) {
+    if (autoMemoryCleanOnGameStart && aceFound && !hasAutoCleanedForGame && !cleaning) {
       setHasAutoCleanedForGame(true);
       addLog('检测到游戏启动，自动执行一次内存清理...');
       void performCleanup();
@@ -407,7 +417,15 @@ function App() {
       setHasAutoRestricted(false);
       setHasAutoCleanedForGame(false);
     }
-  }, [addLog, cleaning, hasAutoCleanedForGame, hasAutoRestricted, performance, performCleanup]);
+  }, [
+    addLog,
+    autoMemoryCleanOnGameStart,
+    cleaning,
+    hasAutoCleanedForGame,
+    hasAutoRestricted,
+    performance,
+    performCleanup,
+  ]);
 
   useEffect(() => {
     if (hasUpdate) {
@@ -478,7 +496,7 @@ function App() {
           onToggleTheme={toggleDarkMode}
         />
 
-        <Box display="flex" flexDirection="column" gap={1} sx={{ flex: 1, overflow: 'hidden' }}>
+        <Box display="flex" flexDirection="column" gap={1} sx={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
           <Box display="flex" gap={1}>
             <PerformancePanel
               history={displayedHistory}
@@ -490,6 +508,8 @@ function App() {
               <MemoryCleanCard
                 status={memoryStatus}
                 cleaning={cleaning}
+                autoMemoryCleanEnabled={autoMemoryCleanOnGameStart}
+                onAutoMemoryCleanChange={setAutoMemoryCleanOnGameStart}
                 onCleanNow={() => {
                   void performCleanup();
                 }}

@@ -8,6 +8,7 @@ import {
   LinearProgress,
   Paper,
   Stack,
+  Switch,
   Typography,
 } from '@mui/material';
 import type { MemoryCleanStatus } from '../types/app';
@@ -15,12 +16,16 @@ import type { MemoryCleanStatus } from '../types/app';
 interface MemoryCleanCardProps {
   status: MemoryCleanStatus | null;
   cleaning: boolean;
+  autoMemoryCleanEnabled: boolean;
+  onAutoMemoryCleanChange: (enabled: boolean) => void;
   onCleanNow: () => void;
 }
 
 export function MemoryCleanCard({
   status,
   cleaning,
+  autoMemoryCleanEnabled,
+  onAutoMemoryCleanChange,
   onCleanNow,
 }: MemoryCleanCardProps) {
   const memoryPercent = useMemo(() => {
@@ -37,12 +42,21 @@ export function MemoryCleanCard({
         <Stack direction="row" spacing={0.5} alignItems="center">
           <RocketIcon sx={{ fontSize: 16 }} color="primary" />
           <Typography variant="subtitle2" fontWeight={600}>
-            内存清理
+            内存加速(新)
           </Typography>
         </Stack>
-        <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.65rem' }}>
-          检测到游戏后自动清理一次
-        </Typography>
+        <Stack direction="row" spacing={0.5} alignItems="center">
+          <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.65rem' }}>
+            游戏前自动加速
+          </Typography>
+          <Switch
+            size="small"
+            checked={autoMemoryCleanEnabled}
+            onChange={(event) => onAutoMemoryCleanChange(event.target.checked)}
+            color="primary"
+            sx={{ transform: 'scale(0.8)' }}
+          />
+        </Stack>
       </Stack>
 
       <Box sx={{ mb: 0.5 }}>

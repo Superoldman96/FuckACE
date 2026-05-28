@@ -41,6 +41,44 @@ struct ProcessPerformance {
 struct AppState;
 
 const TASK_NAME: &str = "FuckACE_AutoStart";
+const MEMORY_CLEAN_PROTECTED_PROCESS_NAMES: &[&str] = &[
+    "system",
+    "registry",
+    "smss.exe",
+    "csrss.exe",
+    "wininit.exe",
+    "winlogon.exe",
+    "services.exe",
+    "lsass.exe",
+    "svchost.exe",
+    "fontdrvhost.exe",
+    "dwm.exe",
+    "explorer.exe",
+    "fuckace.exe",
+    "sguard64.exe",
+    "sguardsvc64.exe",
+    "deltaforceclient-win64-shipping.exe",
+    "valorant-win64-shipping.exe",
+    "league of legends.exe",
+    "abinfinite-win64-shipping.exe",
+    "discovery.exe",
+    "nzfuture-win64-shipping.exe",
+    "crossfire.exe",
+    "dnf.exe",
+    "nrc-win64-shipping.exe",
+    "client-win64-shipping.exe",
+    "pathofexilesteam.exe",
+    "thedivision2.exe",
+    "endfield.exe",
+];
+
+#[derive(Debug)]
+struct WorkingSetCleanStats {
+    processes_total: usize,
+    protected_skipped: usize,
+    processes_attempted: usize,
+    processes_trimmed: usize,
+}
 
 fn find_target_core() -> (u32, u64, bool) {
     let system = System::new_all();
@@ -1749,7 +1787,26 @@ fn enable_privilege(privilege_name: &str) -> bool {
     }
 }
 
-fn empty_all_working_sets() -> (usize, usize) {
+fn is_memory_clean_protected_process(process_name: &str) -> bool {
+    let normalized_name = process_name.to_lowercase();
+    MEMORY_CLEAN_PROTECTED_PROCESS_NAMES
+        .iter()
+        .any(|protected_name| normalized_name == *protected_name)
+}
+
+fn get_process_entry_name(
+    entry: &windows::Win32::System::Diagnostics::ToolHelp::PROCESSENTRY32W,
+) -> String {
+    let end = entry
+        .szExeFile
+        .iter()
+        .position(|character| *character == 0)
+        .unwrap_or(entry.szExeFile.len());
+
+    String::from_utf16_lossy(&entry.szExeFile[..end])
+}
+
+fn empty_safe_working_sets() -> WorkingSetCleanStats {
     use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
@@ -1760,17 +1817,22 @@ fn empty_all_working_sets() -> (usize, usize) {
         OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_SET_QUOTA,
     };
 
-    let mut total = 0usize;
-    let mut success = 0usize;
+    let current_pid = std::process::id();
+    let mut stats = WorkingSetCleanStats {
+        processes_total: 0,
+        protected_skipped: 0,
+        processes_attempted: 0,
+        processes_trimmed: 0,
+    };
 
     unsafe {
         let snapshot = match CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) {
-            Ok(s) => s,
-            Err(_) => return (0, 0),
+            Ok(snapshot) => snapshot,
+            Err(_) => return stats,
         };
 
         if snapshot.is_invalid() {
-            return (0, 0);
+            return stats;
         }
 
         let mut entry: PROCESSENTRY32W = std::mem::zeroed();
@@ -1778,10 +1840,20 @@ fn empty_all_working_sets() -> (usize, usize) {
 
         if Process32FirstW(snapshot, &mut entry).is_ok() {
             loop {
-                total += 1;
+                stats.processes_total += 1;
                 let pid = entry.th32ProcessID;
 
-                if pid != 0 {
+                let process_name = get_process_entry_name(&entry);
+                let is_protected = pid == 0
+                    || pid == 4
+                    || pid == current_pid
+                    || is_memory_clean_protected_process(&process_name);
+
+                if is_protected {
+                    stats.protected_skipped += 1;
+                } else {
+                    stats.processes_attempted += 1;
+
                     if let Ok(handle) = OpenProcess(
                         PROCESS_QUERY_INFORMATION | PROCESS_SET_QUOTA,
                         false,
@@ -1789,7 +1861,7 @@ fn empty_all_working_sets() -> (usize, usize) {
                     ) {
                         if !handle.is_invalid() {
                             if EmptyWorkingSet(handle).is_ok() {
-                                success += 1;
+                                stats.processes_trimmed += 1;
                             }
                             let _ = CloseHandle(handle);
                         }
@@ -1805,64 +1877,7 @@ fn empty_all_working_sets() -> (usize, usize) {
         let _ = CloseHandle(snapshot);
     }
 
-    (success, total)
-}
-
-fn purge_system_caches() -> Vec<String> {
-    use windows::core::PCSTR;
-    use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryA};
-
-    let mut messages = Vec::new();
-
-    unsafe {
-        let module = match LoadLibraryA(PCSTR(b"ntdll.dll\0".as_ptr())) {
-            Ok(m) => m,
-            Err(_) => {
-                messages.push("ntdll.dll加载失败".to_string());
-                return messages;
-            }
-        };
-
-        type NtSetSystemInformationFn =
-            unsafe extern "system" fn(u32, *mut std::ffi::c_void, u32) -> i32;
-
-        let proc_addr = GetProcAddress(module, PCSTR(b"NtSetSystemInformation\0".as_ptr()));
-        let nt_set_system_info: NtSetSystemInformationFn = match proc_addr {
-            Some(addr) => std::mem::transmute(addr),
-            None => {
-                messages.push("NtSetSystemInformation定位失败".to_string());
-                return messages;
-            }
-        };
-
-        const SYSTEM_MEMORY_LIST_INFORMATION: u32 = 80;
-        const MEMORY_EMPTY_WORKING_SETS: u32 = 2;
-        const MEMORY_FLUSH_MODIFIED_LIST: u32 = 3;
-        const MEMORY_PURGE_STANDBY_LIST: u32 = 4;
-
-        let commands = [
-            (MEMORY_EMPTY_WORKING_SETS, "系统工作集"),
-            (MEMORY_FLUSH_MODIFIED_LIST, "已修改页面"),
-            (MEMORY_PURGE_STANDBY_LIST, "待机列表"),
-        ];
-
-        for (cmd, label) in commands {
-            let mut command_value: u32 = cmd;
-            let status = nt_set_system_info(
-                SYSTEM_MEMORY_LIST_INFORMATION,
-                &mut command_value as *mut _ as *mut _,
-                std::mem::size_of::<u32>() as u32,
-            );
-
-            if status == 0 {
-                messages.push(format!("{}已清理", label));
-            } else {
-                messages.push(format!("{}清理失败(0x{:X})", label, status));
-            }
-        }
-    }
-
-    messages
+    stats
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1901,21 +1916,24 @@ struct MemoryCleanResult {
 #[tauri::command]
 async fn clean_memory_and_temp() -> MemoryCleanResult {
     enable_debug_privilege();
-    enable_privilege("SeProfileSingleProcessPrivilege");
     enable_privilege("SeIncreaseQuotaPrivilege");
 
     let mut system_before = System::new();
     system_before.refresh_memory();
     let used_before = system_before.used_memory();
 
-    let (trimmed, total_proc) = empty_all_working_sets();
-    let mut messages = vec![format!("已修剪 {}/{} 个进程工作集", trimmed, total_proc)];
-
-    if is_elevated() {
-        messages.extend(purge_system_caches());
-    } else {
-        messages.push("非管理员权限，已跳过系统级缓存清理".to_string());
-    }
+    let stats = empty_safe_working_sets();
+    let mut messages = vec![
+        format!(
+            "安全清理完成，已修剪 {}/{} 个普通后台进程工作集",
+            stats.processes_trimmed, stats.processes_attempted
+        ),
+        format!(
+            "已跳过 {} 个游戏/ACE/系统/自身保护进程",
+            stats.protected_skipped
+        ),
+        "已跳过系统缓存/Standby List清理，避免影响游戏资源缓存".to_string(),
+    ];
 
     std::thread::sleep(std::time::Duration::from_millis(400));
 
@@ -1931,8 +1949,8 @@ async fn clean_memory_and_temp() -> MemoryCleanResult {
 
     MemoryCleanResult {
         memory_freed_mb,
-        processes_trimmed: trimmed,
-        processes_total: total_proc,
+        processes_trimmed: stats.processes_trimmed,
+        processes_total: stats.processes_total,
         messages,
     }
 }

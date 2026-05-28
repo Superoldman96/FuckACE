@@ -9,17 +9,18 @@ interface LogPanelProps {
 
 export function LogPanel({ logs, containerRef }: LogPanelProps) {
   return (
-    <Paper elevation={2} sx={{ p: 1.5, flex: 1, maxWidth: '100%', minHeight: 120 }}>
+    <Paper elevation={2} sx={{ p: 1.5, flex: 1, maxWidth: '100%', minHeight: 0, display: 'flex', overflow: 'hidden' }}>
       <Box
         ref={containerRef}
         sx={{
-          height: '100%',
+          flex: 1,
           minHeight: 80,
           overflowY: 'auto',
           border: '1px solid',
           borderColor: 'divider',
           borderRadius: 1,
           p: 0.75,
+          boxSizing: 'border-box',
           backgroundColor: 'background.default',
         }}
       >
