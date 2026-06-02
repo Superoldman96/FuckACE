@@ -1,9 +1,11 @@
 # FuckACE
-## FuckACE是一个用来优化所有使用ACE的游戏的免安装软件，可以全自动限制ACE占用，以降低ACE对电脑的性能影响。
+## FuckACE是一个用来优化所有使用ACE的游戏的免费开源免安装工具，可以全自动限制ACE占用，以降低ACE对电脑的性能影响。
 ### 喜欢的话请点点star，谢谢！Ciallo～(∠・ω<)⌒☆
 
 最新版本下载：
-- [下载最新版本](https://mikugame.net/modpacks)
+- [迅雷下载](https://pan.xunlei.com/s/VOlRy4qvhrn151DGQ_Y4AUrxA1?pwd=udua#)
+- [夸克下载](https://pan.quark.cn/s/e8924b638b81)
+- [Github下载](https://github.com/shshouse/FuckACE/releases)
   
 相关使用教程请看B站视频：
 - [FuckACE使用教程](https://www.bilibili.com/video/BV1ePCnBpEWp/)
