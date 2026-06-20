@@ -47,7 +47,7 @@ export function SystemInfoCard({ systemInfo }: SystemInfoCardProps) {
             <Typography variant="caption" color="text.secondary">
               权限:
             </Typography>
-            <Typography variant="caption">管理员</Typography>
+            <Typography variant="caption">{systemInfo.is_admin ? '管理员' : '普通用户'}</Typography>
           </Box>
         </Box>
       ) : (

@@ -154,6 +154,14 @@ export const gameOptimizationActions: GameOptimizationAction[] = [
     successMessage: '终末地优先级修改完成:',
     errorMessage: '提高终末地优先级失败',
   },
+  {
+    id: 'calabiyau',
+    label: '卡拉比丘优化',
+    command: 'raise_calabiyau_priority',
+    startMessage: '开始提高卡拉比丘优先级...',
+    successMessage: '卡拉比丘优先级修改完成:',
+    errorMessage: '提高卡拉比丘优先级失败',
+  },
 ];
 
 export async function getSystemInfo() {

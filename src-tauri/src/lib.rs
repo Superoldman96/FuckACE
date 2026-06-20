@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use sysinfo::{Pid, System};
+use sysinfo::{Pid, ProcessesToUpdate, System};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, State, WindowEvent};
@@ -70,6 +70,7 @@ const MEMORY_CLEAN_PROTECTED_PROCESS_NAMES: &[&str] = &[
     "pathofexilesteam.exe",
     "thedivision2.exe",
     "endfield.exe",
+    "calabiyau-win64-shipping.exe",
 ];
 
 #[derive(Debug)]
@@ -80,8 +81,45 @@ struct WorkingSetCleanStats {
     processes_trimmed: usize,
 }
 
+const ALL_MONITORED_EXE_NAMES: &[&str] = &[
+    "DeltaForceClient-Win64-Shipping.exe",
+    "SGuard64.exe",
+    "SGuardSvc64.exe",
+    "VALORANT-Win64-Shipping.exe",
+    "League of Legends.exe",
+    "ABInfinite-Win64-Shipping.exe",
+    "discovery.exe",
+    "NZFuture-Win64-Shipping.exe",
+    "crossfire.exe",
+    "DNF.exe",
+    "NRC-Win64-Shipping.exe",
+    "Client-Win64-Shipping.exe",
+    "PathOfExileSteam.exe",
+    "TheDivision2.exe",
+    "Endfield.exe",
+    "Calabiyau-Win64-Shipping.exe",
+];
+
+fn set_game_registry_priority(exe_name: &str, cpu: u32, io: u32) -> Result<String, String> {
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    let base_path = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options";
+    let key_path = format!(r"{}\{}\PerfOptions", base_path, exe_name);
+
+    match hklm.create_subkey(&key_path) {
+        Ok((key, _)) => {
+            key.set_value("CpuPriorityClass", &cpu)
+                .map_err(|e| format!("{}:设置CPU优先级失败:{}", exe_name, e))?;
+            key.set_value("IoPriority", &io)
+                .map_err(|e| format!("{}:设置I/O优先级失败:{}", exe_name, e))?;
+            Ok(format!("{}:设置成功(CPU:{},I/O:{})", exe_name, cpu, io))
+        }
+        Err(e) => Err(format!("{}:创建注册表项失败:{}", exe_name, e)),
+    }
+}
+
 fn find_target_core() -> (u32, u64, bool) {
-    let system = System::new_all();
+    let mut system = System::new();
+    system.refresh_cpu_all();
     let total_cores = system.cpus().len() as u32;
     let target_core = if total_cores > 0 { total_cores - 1 } else { 0 };
     let core_mask = 1u64 << target_core;
@@ -141,7 +179,8 @@ fn set_process_affinity_with_fallback(
     }
 
     eprintln!("进程亲和性PID {} E-Core绑定失败，尝试备用方案", pid);
-    let system = System::new_all();
+    let mut system = System::new();
+    system.refresh_cpu_all();
     let total_cores = system.cpus().len() as u32;
     let fallback_core = if total_cores > 0 { total_cores - 1 } else { 0 };
     let fallback_mask = 1u64 << fallback_core;
@@ -340,6 +379,73 @@ fn set_process_memory_priority(pid: Pid) -> (bool, Option<String>) {
     }
 }
 
+fn restrict_single_process(
+    pid: Pid,
+    enable_cpu_affinity: bool,
+    enable_process_priority: bool,
+    enable_efficiency_mode: bool,
+    enable_io_priority: bool,
+    enable_memory_priority: bool,
+    core_mask: u64,
+    is_e_core: bool,
+) -> (bool, Vec<String>) {
+    let (affinity_ok, affinity_err, actual_core) = if enable_cpu_affinity {
+        set_process_affinity_with_fallback(pid, core_mask, is_e_core)
+    } else {
+        (false, None, 0)
+    };
+    let priority_ok = if enable_process_priority {
+        set_process_priority(pid)
+    } else {
+        false
+    };
+
+    let (efficiency_ok, io_priority_ok, mem_priority_ok) = {
+        let (eff_ok, _) = if enable_efficiency_mode {
+            set_process_efficiency_mode(pid)
+        } else {
+            (false, None)
+        };
+        let (io_ok, _) = if enable_io_priority {
+            set_process_io_priority(pid)
+        } else {
+            (false, None)
+        };
+        let (mem_ok, _) = if enable_memory_priority {
+            set_process_memory_priority(pid)
+        } else {
+            (false, None)
+        };
+        (eff_ok, io_ok, mem_ok)
+    };
+
+    let mut details = Vec::new();
+    if affinity_ok {
+        details.push(format!("CPU亲和性→核心{}", actual_core));
+    } else if let Some(err) = &affinity_err {
+        details.push(format!("CPU亲和性✗({})", err));
+    } else {
+        details.push("CPU亲和性✗".to_string());
+    }
+    if priority_ok {
+        details.push("优先级→最低".to_string());
+    } else {
+        details.push("优先级✗".to_string());
+    }
+    if efficiency_ok {
+        details.push("效率模式✓".to_string());
+    }
+    if io_priority_ok {
+        details.push("I/O优先级✓".to_string());
+    }
+    if mem_priority_ok {
+        details.push("内存优先级✓".to_string());
+    }
+
+    let restricted = affinity_ok || priority_ok || efficiency_ok || io_priority_ok || mem_priority_ok;
+    (restricted, details)
+}
+
 fn restrict_target_processes(
     enable_cpu_affinity: bool,
     enable_process_priority: bool,
@@ -349,8 +455,8 @@ fn restrict_target_processes(
 ) -> RestrictResult {
     enable_debug_privilege();
 
-    let mut system = System::new_all();
-    system.refresh_processes();
+    let mut system = System::new();
+    system.refresh_processes(ProcessesToUpdate::All, true);
 
     let (target_core, core_mask, is_e_core) = find_target_core();
 
@@ -402,153 +508,37 @@ fn restrict_target_processes(
     message.push_str(&format!("绑定到最后一个逻辑核心 {}\n", target_core));
 
     for (pid, process) in system.processes() {
-        let process_name = process.name().to_lowercase();
+        let process_name = process.name().to_string_lossy().to_lowercase();
 
         if process_name.contains("sguard64.exe") {
             sguard64_found = true;
-
-            let (affinity_ok, affinity_err, actual_core) = if enable_cpu_affinity {
-                set_process_affinity_with_fallback(*pid, core_mask, is_e_core)
-            } else {
-                (false, None, 0)
-            };
-            let priority_ok = if enable_process_priority {
-                set_process_priority(*pid)
-            } else {
-                false
-            };
-
-            let (efficiency_ok, io_priority_ok, mem_priority_ok) = {
-                let (eff_ok, _) = if enable_efficiency_mode {
-                    set_process_efficiency_mode(*pid)
-                } else {
-                    (false, None)
-                };
-                let (io_ok, _) = if enable_io_priority {
-                    set_process_io_priority(*pid)
-                } else {
-                    (false, None)
-                };
-                let (mem_ok, _) = if enable_memory_priority {
-                    set_process_memory_priority(*pid)
-                } else {
-                    (false, None)
-                };
-                (eff_ok, io_ok, mem_ok)
-            };
-
-            let mut details = Vec::new();
-            if affinity_ok {
-                details.push(format!("CPU亲和性→核心{}", actual_core));
-            } else if let Some(err) = &affinity_err {
-                details.push(format!("CPU亲和性✗({})", err));
-            } else {
-                details.push("CPU亲和性✗".to_string());
-            }
-
-            if priority_ok {
-                details.push("优先级→最低".to_string());
-            } else {
-                details.push("优先级✗".to_string());
-            }
-
-            if efficiency_ok {
-                details.push("效率模式✓".to_string());
-            }
-            if io_priority_ok {
-                details.push("I/O优先级✓".to_string());
-            }
-            if mem_priority_ok {
-                details.push("内存优先级✓".to_string());
-            }
-
-            if affinity_ok || priority_ok || efficiency_ok || io_priority_ok || mem_priority_ok {
+            let (restricted, details) = restrict_single_process(
+                *pid, enable_cpu_affinity, enable_process_priority,
+                enable_efficiency_mode, enable_io_priority, enable_memory_priority,
+                core_mask, is_e_core,
+            );
+            let details_str = details.join(", ");
+            if restricted {
                 sguard64_restricted = true;
-                message.push_str(&format!(
-                    "SGuard64.exe (PID: {}) [{}]\n",
-                    pid,
-                    details.join(", ")
-                ));
+                message.push_str(&format!("SGuard64.exe (PID: {}) [{}]\n", pid, details_str));
             } else {
-                message.push_str(&format!(
-                    "SGuard64.exe (PID: {}) 所有限制均失败 [{}]\n",
-                    pid,
-                    details.join(", ")
-                ));
+                message.push_str(&format!("SGuard64.exe (PID: {}) 所有限制均失败 [{}]\n", pid, details_str));
             }
         }
 
         if process_name.contains("sguardsvc64.exe") {
             sguardsvc64_found = true;
-
-            let (affinity_ok, affinity_err, actual_core) = if enable_cpu_affinity {
-                set_process_affinity_with_fallback(*pid, core_mask, is_e_core)
-            } else {
-                (false, None, 0)
-            };
-            let priority_ok = if enable_process_priority {
-                set_process_priority(*pid)
-            } else {
-                false
-            };
-
-            let (efficiency_ok, io_priority_ok, mem_priority_ok) = {
-                let (eff_ok, _) = if enable_efficiency_mode {
-                    set_process_efficiency_mode(*pid)
-                } else {
-                    (false, None)
-                };
-                let (io_ok, _) = if enable_io_priority {
-                    set_process_io_priority(*pid)
-                } else {
-                    (false, None)
-                };
-                let (mem_ok, _) = if enable_memory_priority {
-                    set_process_memory_priority(*pid)
-                } else {
-                    (false, None)
-                };
-                (eff_ok, io_ok, mem_ok)
-            };
-
-            let mut details = Vec::new();
-            if affinity_ok {
-                details.push(format!("CPU亲和性→核心{}", actual_core));
-            } else if let Some(err) = &affinity_err {
-                details.push(format!("CPU亲和性✗({})", err));
-            } else {
-                details.push("CPU亲和性✗".to_string());
-            }
-
-            if priority_ok {
-                details.push("优先级→最低".to_string());
-            } else {
-                details.push("优先级✗".to_string());
-            }
-
-            if efficiency_ok {
-                details.push("效率模式✓".to_string());
-            }
-            if io_priority_ok {
-                details.push("I/O优先级✓".to_string());
-            }
-            if mem_priority_ok {
-                details.push("内存优先级✓".to_string());
-            }
-
-            if affinity_ok || priority_ok || efficiency_ok || io_priority_ok || mem_priority_ok {
+            let (restricted, details) = restrict_single_process(
+                *pid, enable_cpu_affinity, enable_process_priority,
+                enable_efficiency_mode, enable_io_priority, enable_memory_priority,
+                core_mask, is_e_core,
+            );
+            let details_str = details.join(", ");
+            if restricted {
                 sguardsvc64_restricted = true;
-                message.push_str(&format!(
-                    "SGuardSvc64.exe (PID: {}) [{}]\n",
-                    pid,
-                    details.join(", ")
-                ));
+                message.push_str(&format!("SGuardSvc64.exe (PID: {}) [{}]\n", pid, details_str));
             } else {
-                message.push_str(&format!(
-                    "SGuardSvc64.exe (PID: {}) 所有限制均失败 [{}]\n",
-                    pid,
-                    details.join(", ")
-                ));
+                message.push_str(&format!("SGuardSvc64.exe (PID: {}) 所有限制均失败 [{}]\n", pid, details_str));
             }
         }
     }
@@ -854,7 +844,7 @@ fn get_cpu_model_from_registry() -> Option<String> {
 #[tauri::command]
 async fn get_system_info() -> SystemInfo {
     let mut system = System::new();
-    system.refresh_cpu_specifics(sysinfo::CpuRefreshKind::everything());
+    system.refresh_cpu_all();
     system.refresh_memory();
 
     let cpu_model = system
@@ -891,24 +881,24 @@ async fn get_system_info() -> SystemInfo {
 #[tauri::command]
 async fn get_process_performance() -> Vec<ProcessPerformance> {
     let mut system = System::new();
-    system.refresh_cpu_specifics(sysinfo::CpuRefreshKind::everything());
-    system.refresh_processes();
+    system.refresh_cpu_all();
+    system.refresh_processes(ProcessesToUpdate::All, true);
 
     std::thread::sleep(std::time::Duration::from_millis(200));
-    system.refresh_processes();
+    system.refresh_processes(ProcessesToUpdate::All, true);
 
     let target_names = vec!["sguard64.exe", "sguardsvc64.exe"];
     let mut performances = Vec::new();
 
     for (pid, process) in system.processes() {
-        let process_name = process.name().to_lowercase();
+        let process_name = process.name().to_string_lossy().to_lowercase();
 
         for target in &target_names {
             if process_name.contains(target) {
                 let disk = process.disk_usage();
                 performances.push(ProcessPerformance {
                     pid: pid.as_u32(),
-                    name: process.name().to_string(),
+                    name: process.name().to_string_lossy().to_string(),
                     cpu_usage: process.cpu_usage(),
                     memory_mb: process.memory() as f64 / 1024.0 / 1024.0,
                     disk_read_bytes: disk.read_bytes,
@@ -920,19 +910,6 @@ async fn get_process_performance() -> Vec<ProcessPerformance> {
     }
 
     performances
-}
-
-#[tauri::command]
-async fn check_game_processes() -> Vec<String> {
-    Vec::new()
-}
-
-#[tauri::command]
-async fn set_game_process_priority() -> Result<String, String> {
-    Ok(
-        "游戏进程优先级设置功能已改为手动执行模式。请通过前端界面手动选择要设置的进程。"
-            .to_string(),
-    )
 }
 
 fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
@@ -1066,575 +1043,95 @@ async fn lower_ace_priority() -> Result<String, String> {
     if !is_elevated() {
         return Err("需要管理员权限才能修改注册表".to_string());
     }
-
-    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
-    let base_path = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options";
-
-    let mut results = Vec::new();
-
-    let configs = vec![
-        ("SGuard64.exe", 1u32, 1u32),
-        ("SGuardSvc64.exe", 1u32, 1u32),
-    ];
-
-    for (exe_name, cpu_priority, io_priority) in configs {
-        let key_path = format!(r"{}\{}\PerfOptions", base_path, exe_name);
-
-        match hklm.create_subkey(&key_path) {
-            Ok((key, _)) => {
-                let mut success = true;
-
-                // 设置 CPU 优先级
-                if let Err(e) = key.set_value("CpuPriorityClass", &cpu_priority) {
-                    results.push(format!("{}:设置CPU优先级失败:{}", exe_name, e));
-                    success = false;
-                }
-
-                // 设置 I/O 优先级
-                if let Err(e) = key.set_value("IoPriority", &io_priority) {
-                    results.push(format!("{}:设置I/O优先级失败:{}", exe_name, e));
-                    success = false;
-                }
-
-                if success {
-                    results.push(format!(
-                        "{}:设置成功(CPU:{},I/O:{})",
-                        exe_name, cpu_priority, io_priority
-                    ));
-                }
-            }
-            Err(e) => {
-                results.push(format!("{}:创建注册表项失败:{}", exe_name, e));
-            }
-        }
-    }
-
+    let results: Vec<String> = ["SGuard64.exe", "SGuardSvc64.exe"]
+        .iter()
+        .map(|name| set_game_registry_priority(name, 1, 1).unwrap_or_else(|e| e))
+        .collect();
     Ok(results.join("\n"))
 }
 
 #[tauri::command]
 async fn raise_delta_priority() -> Result<String, String> {
-    if !is_elevated() {
-        return Err("需要管理员权限才能修改注册表".to_string());
-    }
-    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
-    let base_path = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options";
-    let mut results = Vec::new();
-    let configs = vec![("DeltaForceClient-Win64-Shipping.exe", 3u32, 3u32)];
-
-    for (exe_name, cpu_priority, io_priority) in configs {
-        let key_path = format!(r"{}\{}\PerfOptions", base_path, exe_name);
-
-        match hklm.create_subkey(&key_path) {
-            Ok((key, _)) => {
-                let mut success = true;
-                if let Err(e) = key.set_value("CpuPriorityClass", &cpu_priority) {
-                    results.push(format!("{}:设置CPU优先级失败:{}", exe_name, e));
-                    success = false;
-                }
-                if let Err(e) = key.set_value("IoPriority", &io_priority) {
-                    results.push(format!("{}:设置I/O优先级失败:{}", exe_name, e));
-                    success = false;
-                }
-                if success {
-                    results.push(format!(
-                        "{}:设置成功(CPU:{},I/O:{})",
-                        exe_name, cpu_priority, io_priority
-                    ));
-                }
-            }
-            Err(e) => {
-                results.push(format!("{}:创建注册表项失败:{}", exe_name, e));
-            }
-        }
-    }
-
-    Ok(results.join("\n"))
+    if !is_elevated() { return Err("需要管理员权限才能修改注册表".to_string()); }
+    set_game_registry_priority("DeltaForceClient-Win64-Shipping.exe", 3, 3)
 }
 
 #[tauri::command]
 async fn raise_crossfire_priority() -> Result<String, String> {
-    if !is_elevated() {
-        return Err("需要管理员权限才能修改注册表".to_string());
-    }
-    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
-    let base_path = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options";
-    let mut results = Vec::new();
-    let configs = vec![("crossfire.exe", 3u32, 3u32)];
-
-    for (exe_name, cpu_priority, io_priority) in configs {
-        let key_path = format!(r"{}\{}\PerfOptions", base_path, exe_name);
-
-        match hklm.create_subkey(&key_path) {
-            Ok((key, _)) => {
-                let mut success = true;
-                if let Err(e) = key.set_value("CpuPriorityClass", &cpu_priority) {
-                    results.push(format!("{}:设置CPU优先级失败:{}", exe_name, e));
-                    success = false;
-                }
-                if let Err(e) = key.set_value("IoPriority", &io_priority) {
-                    results.push(format!("{}:设置I/O优先级失败:{}", exe_name, e));
-                    success = false;
-                }
-                if success {
-                    results.push(format!(
-                        "{}:设置成功(CPU:{},I/O:{})",
-                        exe_name, cpu_priority, io_priority
-                    ));
-                }
-            }
-            Err(e) => {
-                results.push(format!("{}:创建注册表项失败:{}", exe_name, e));
-            }
-        }
-    }
-
-    Ok(results.join("\n"))
+    if !is_elevated() { return Err("需要管理员权限才能修改注册表".to_string()); }
+    set_game_registry_priority("crossfire.exe", 3, 3)
 }
 
 #[tauri::command]
 async fn modify_valorant_registry_priority() -> Result<String, String> {
-    if !is_elevated() {
-        return Err("需要管理员权限才能修改注册表".to_string());
-    }
-
-    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
-    let base_path = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options";
-
-    let mut results = Vec::new();
-    let configs = vec![("VALORANT-Win64-Shipping.exe", 3u32, 3u32)];
-
-    for (exe_name, cpu_priority, io_priority) in configs {
-        let key_path = format!(r"{}\{}\PerfOptions", base_path, exe_name);
-
-        match hklm.create_subkey(&key_path) {
-            Ok((key, _)) => {
-                let mut success = true;
-
-                if let Err(e) = key.set_value("CpuPriorityClass", &cpu_priority) {
-                    results.push(format!("{}:设置CPU优先级失败:{}", exe_name, e));
-                    success = false;
-                }
-
-                if let Err(e) = key.set_value("IoPriority", &io_priority) {
-                    results.push(format!("{}:设置I/O优先级失败:{}", exe_name, e));
-                    success = false;
-                }
-
-                if success {
-                    results.push(format!(
-                        "{}:设置成功(CPU:{},I/O:{})",
-                        exe_name, cpu_priority, io_priority
-                    ));
-                }
-            }
-            Err(e) => {
-                results.push(format!("{}:创建注册表项失败:{}", exe_name, e));
-            }
-        }
-    }
-
-    Ok(results.join("\n"))
+    if !is_elevated() { return Err("需要管理员权限才能修改注册表".to_string()); }
+    set_game_registry_priority("VALORANT-Win64-Shipping.exe", 3, 3)
 }
 
 #[tauri::command]
 async fn raise_league_priority() -> Result<String, String> {
-    if !is_elevated() {
-        return Err("需要管理员权限才能修改注册表".to_string());
-    }
-    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
-    let base_path = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options";
-    let mut results = Vec::new();
-    let configs = vec![("League of Legends.exe", 3u32, 3u32)];
-
-    for (exe_name, cpu_priority, io_priority) in configs {
-        let key_path = format!(r"{}\{}\PerfOptions", base_path, exe_name);
-
-        match hklm.create_subkey(&key_path) {
-            Ok((key, _)) => {
-                let mut success = true;
-                if let Err(e) = key.set_value("CpuPriorityClass", &cpu_priority) {
-                    results.push(format!("{}:设置CPU优先级失败:{}", exe_name, e));
-                    success = false;
-                }
-                if let Err(e) = key.set_value("IoPriority", &io_priority) {
-                    results.push(format!("{}:设置I/O优先级失败:{}", exe_name, e));
-                    success = false;
-                }
-                if success {
-                    results.push(format!(
-                        "{}:设置成功(CPU:{},I/O:{})",
-                        exe_name, cpu_priority, io_priority
-                    ));
-                }
-            }
-            Err(e) => {
-                results.push(format!("{}:创建注册表项失败:{}", exe_name, e));
-            }
-        }
-    }
-
-    Ok(results.join("\n"))
+    if !is_elevated() { return Err("需要管理员权限才能修改注册表".to_string()); }
+    set_game_registry_priority("League of Legends.exe", 3, 3)
 }
 
 #[tauri::command]
 async fn raise_arena_priority() -> Result<String, String> {
-    if !is_elevated() {
-        return Err("需要管理员权限才能修改注册表".to_string());
-    }
-    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
-    let base_path = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options";
-    let mut results = Vec::new();
-    let configs = vec![("ABInfinite-Win64-Shipping.exe", 3u32, 3u32)];
-
-    for (exe_name, cpu_priority, io_priority) in configs {
-        let key_path = format!(r"{}\{}\PerfOptions", base_path, exe_name);
-
-        match hklm.create_subkey(&key_path) {
-            Ok((key, _)) => {
-                let mut success = true;
-                if let Err(e) = key.set_value("CpuPriorityClass", &cpu_priority) {
-                    results.push(format!("{}:设置CPU优先级失败:{}", exe_name, e));
-                    success = false;
-                }
-                if let Err(e) = key.set_value("IoPriority", &io_priority) {
-                    results.push(format!("{}:设置I/O优先级失败:{}", exe_name, e));
-                    success = false;
-                }
-                if success {
-                    results.push(format!(
-                        "{}:设置成功(CPU:{},I/O:{})",
-                        exe_name, cpu_priority, io_priority
-                    ));
-                }
-            }
-            Err(e) => {
-                results.push(format!("{}:创建注册表项失败:{}", exe_name, e));
-            }
-        }
-    }
-
-    Ok(results.join("\n"))
+    if !is_elevated() { return Err("需要管理员权限才能修改注册表".to_string()); }
+    set_game_registry_priority("ABInfinite-Win64-Shipping.exe", 3, 3)
 }
 
 #[tauri::command]
 async fn raise_finals_priority() -> Result<String, String> {
-    if !is_elevated() {
-        return Err("需要管理员权限才能修改注册表".to_string());
-    }
-    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
-    let base_path = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options";
-    let mut results = Vec::new();
-    let configs = vec![("discovery.exe", 3u32, 3u32)];
-
-    for (exe_name, cpu_priority, io_priority) in configs {
-        let key_path = format!(r"{}\{}\PerfOptions", base_path, exe_name);
-
-        match hklm.create_subkey(&key_path) {
-            Ok((key, _)) => {
-                let mut success = true;
-                if let Err(e) = key.set_value("CpuPriorityClass", &cpu_priority) {
-                    results.push(format!("{}:设置CPU优先级失败:{}", exe_name, e));
-                    success = false;
-                }
-                if let Err(e) = key.set_value("IoPriority", &io_priority) {
-                    results.push(format!("{}:设置I/O优先级失败:{}", exe_name, e));
-                    success = false;
-                }
-                if success {
-                    results.push(format!(
-                        "{}:设置成功(CPU:{},I/O:{})",
-                        exe_name, cpu_priority, io_priority
-                    ));
-                }
-            }
-            Err(e) => {
-                results.push(format!("{}:创建注册表项失败:{}", exe_name, e));
-            }
-        }
-    }
-
-    Ok(results.join("\n"))
+    if !is_elevated() { return Err("需要管理员权限才能修改注册表".to_string()); }
+    set_game_registry_priority("discovery.exe", 3, 3)
 }
 
 #[tauri::command]
 async fn raise_nzfuture_priority() -> Result<String, String> {
-    if !is_elevated() {
-        return Err("需要管理员权限才能修改注册表".to_string());
-    }
-    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
-    let base_path = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options";
-    let mut results = Vec::new();
-    let configs = vec![("NZFuture-Win64-Shipping.exe", 3u32, 3u32)];
-
-    for (exe_name, cpu_priority, io_priority) in configs {
-        let key_path = format!(r"{}\{}\PerfOptions", base_path, exe_name);
-
-        match hklm.create_subkey(&key_path) {
-            Ok((key, _)) => {
-                let mut success = true;
-                if let Err(e) = key.set_value("CpuPriorityClass", &cpu_priority) {
-                    results.push(format!("{}:设置CPU优先级失败:{}", exe_name, e));
-                    success = false;
-                }
-                if let Err(e) = key.set_value("IoPriority", &io_priority) {
-                    results.push(format!("{}:设置I/O优先级失败:{}", exe_name, e));
-                    success = false;
-                }
-                if success {
-                    results.push(format!(
-                        "{}:设置成功(CPU:{},I/O:{})",
-                        exe_name, cpu_priority, io_priority
-                    ));
-                }
-            }
-            Err(e) => {
-                results.push(format!("{}:创建注册表项失败:{}", exe_name, e));
-            }
-        }
-    }
-
-    Ok(results.join("\n"))
+    if !is_elevated() { return Err("需要管理员权限才能修改注册表".to_string()); }
+    set_game_registry_priority("NZFuture-Win64-Shipping.exe", 3, 3)
 }
 
 #[tauri::command]
 async fn raise_dnf_priority() -> Result<String, String> {
-    if !is_elevated() {
-        return Err("需要管理员权限才能修改注册表".to_string());
-    }
-    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
-    let base_path = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options";
-    let mut results = Vec::new();
-    let configs = vec![("DNF.exe", 3u32, 3u32)];
-
-    for (exe_name, cpu_priority, io_priority) in configs {
-        let key_path = format!(r"{}\{}\PerfOptions", base_path, exe_name);
-
-        match hklm.create_subkey(&key_path) {
-            Ok((key, _)) => {
-                let mut success = true;
-                if let Err(e) = key.set_value("CpuPriorityClass", &cpu_priority) {
-                    results.push(format!("{}:设置CPU优先级失败:{}", exe_name, e));
-                    success = false;
-                }
-                if let Err(e) = key.set_value("IoPriority", &io_priority) {
-                    results.push(format!("{}:设置I/O优先级失败:{}", exe_name, e));
-                    success = false;
-                }
-                if success {
-                    results.push(format!(
-                        "{}:设置成功(CPU:{},I/O:{})",
-                        exe_name, cpu_priority, io_priority
-                    ));
-                }
-            }
-            Err(e) => {
-                results.push(format!("{}:创建注册表项失败:{}", exe_name, e));
-            }
-        }
-    }
-
-    Ok(results.join("\n"))
+    if !is_elevated() { return Err("需要管理员权限才能修改注册表".to_string()); }
+    set_game_registry_priority("DNF.exe", 3, 3)
 }
 
 #[tauri::command]
 async fn raise_rocoworld_priority() -> Result<String, String> {
-    if !is_elevated() {
-        return Err("需要管理员权限才能修改注册表".to_string());
-    }
-    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
-    let base_path = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options";
-    let mut results = Vec::new();
-    let configs = vec![("NRC-Win64-Shipping.exe", 3u32, 3u32)];
-
-    for (exe_name, cpu_priority, io_priority) in configs {
-        let key_path = format!(r"{}\{}\PerfOptions", base_path, exe_name);
-
-        match hklm.create_subkey(&key_path) {
-            Ok((key, _)) => {
-                let mut success = true;
-                if let Err(e) = key.set_value("CpuPriorityClass", &cpu_priority) {
-                    results.push(format!("{}:设置CPU优先级失败:{}", exe_name, e));
-                    success = false;
-                }
-                if let Err(e) = key.set_value("IoPriority", &io_priority) {
-                    results.push(format!("{}:设置I/O优先级失败:{}", exe_name, e));
-                    success = false;
-                }
-                if success {
-                    results.push(format!(
-                        "{}:设置成功(CPU:{},I/O:{})",
-                        exe_name, cpu_priority, io_priority
-                    ));
-                }
-            }
-            Err(e) => {
-                results.push(format!("{}:创建注册表项失败:{}", exe_name, e));
-            }
-        }
-    }
-
-    Ok(results.join("\n"))
+    if !is_elevated() { return Err("需要管理员权限才能修改注册表".to_string()); }
+    set_game_registry_priority("NRC-Win64-Shipping.exe", 3, 3)
 }
 
 #[tauri::command]
 async fn raise_wutheringwaves_priority() -> Result<String, String> {
-    if !is_elevated() {
-        return Err("需要管理员权限才能修改注册表".to_string());
-    }
-    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
-    let base_path = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options";
-    let mut results = Vec::new();
-    let configs = vec![("Client-Win64-Shipping.exe", 3u32, 3u32)];
-
-    for (exe_name, cpu_priority, io_priority) in configs {
-        let key_path = format!(r"{}\{}\PerfOptions", base_path, exe_name);
-
-        match hklm.create_subkey(&key_path) {
-            Ok((key, _)) => {
-                let mut success = true;
-                if let Err(e) = key.set_value("CpuPriorityClass", &cpu_priority) {
-                    results.push(format!("{}:设置CPU优先级失败:{}", exe_name, e));
-                    success = false;
-                }
-                if let Err(e) = key.set_value("IoPriority", &io_priority) {
-                    results.push(format!("{}:设置I/O优先级失败:{}", exe_name, e));
-                    success = false;
-                }
-                if success {
-                    results.push(format!(
-                        "{}:设置成功(CPU:{},I/O:{})",
-                        exe_name, cpu_priority, io_priority
-                    ));
-                }
-            }
-            Err(e) => {
-                results.push(format!("{}:创建注册表项失败:{}", exe_name, e));
-            }
-        }
-    }
-
-    Ok(results.join("\n"))
+    if !is_elevated() { return Err("需要管理员权限才能修改注册表".to_string()); }
+    set_game_registry_priority("Client-Win64-Shipping.exe", 3, 3)
 }
 
 #[tauri::command]
 async fn raise_poe2_priority() -> Result<String, String> {
-    if !is_elevated() {
-        return Err("需要管理员权限才能修改注册表".to_string());
-    }
-    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
-    let base_path = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options";
-    let mut results = Vec::new();
-    let configs = vec![("PathOfExileSteam.exe", 3u32, 3u32)];
-
-    for (exe_name, cpu_priority, io_priority) in configs {
-        let key_path = format!(r"{}\{}\PerfOptions", base_path, exe_name);
-
-        match hklm.create_subkey(&key_path) {
-            Ok((key, _)) => {
-                let mut success = true;
-                if let Err(e) = key.set_value("CpuPriorityClass", &cpu_priority) {
-                    results.push(format!("{}:设置CPU优先级失败:{}", exe_name, e));
-                    success = false;
-                }
-                if let Err(e) = key.set_value("IoPriority", &io_priority) {
-                    results.push(format!("{}:设置I/O优先级失败:{}", exe_name, e));
-                    success = false;
-                }
-                if success {
-                    results.push(format!(
-                        "{}:设置成功(CPU:{},I/O:{})",
-                        exe_name, cpu_priority, io_priority
-                    ));
-                }
-            }
-            Err(e) => {
-                results.push(format!("{}:创建注册表项失败:{}", exe_name, e));
-            }
-        }
-    }
-
-    Ok(results.join("\n"))
+    if !is_elevated() { return Err("需要管理员权限才能修改注册表".to_string()); }
+    set_game_registry_priority("PathOfExileSteam.exe", 3, 3)
 }
 
 #[tauri::command]
 async fn raise_division2_priority() -> Result<String, String> {
-    if !is_elevated() {
-        return Err("需要管理员权限才能修改注册表".to_string());
-    }
-    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
-    let base_path = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options";
-    let mut results = Vec::new();
-    let configs = vec![("TheDivision2.exe", 3u32, 3u32)];
-
-    for (exe_name, cpu_priority, io_priority) in configs {
-        let key_path = format!(r"{}\{}\PerfOptions", base_path, exe_name);
-
-        match hklm.create_subkey(&key_path) {
-            Ok((key, _)) => {
-                let mut success = true;
-                if let Err(e) = key.set_value("CpuPriorityClass", &cpu_priority) {
-                    results.push(format!("{}:设置CPU优先级失败:{}", exe_name, e));
-                    success = false;
-                }
-                if let Err(e) = key.set_value("IoPriority", &io_priority) {
-                    results.push(format!("{}:设置I/O优先级失败:{}", exe_name, e));
-                    success = false;
-                }
-                if success {
-                    results.push(format!(
-                        "{}:设置成功(CPU:{},I/O:{})",
-                        exe_name, cpu_priority, io_priority
-                    ));
-                }
-            }
-            Err(e) => {
-                results.push(format!("{}:创建注册表项失败:{}", exe_name, e));
-            }
-        }
-    }
-
-    Ok(results.join("\n"))
+    if !is_elevated() { return Err("需要管理员权限才能修改注册表".to_string()); }
+    set_game_registry_priority("TheDivision2.exe", 3, 3)
 }
 
 #[tauri::command]
 async fn raise_endfield_priority() -> Result<String, String> {
-    if !is_elevated() {
-        return Err("需要管理员权限才能修改注册表".to_string());
-    }
-    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
-    let base_path = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options";
-    let mut results = Vec::new();
-    let configs = vec![("Endfield.exe", 3u32, 3u32)];
+    if !is_elevated() { return Err("需要管理员权限才能修改注册表".to_string()); }
+    set_game_registry_priority("Endfield.exe", 3, 3)
+}
 
-    for (exe_name, cpu_priority, io_priority) in configs {
-        let key_path = format!(r"{}\{}\PerfOptions", base_path, exe_name);
-
-        match hklm.create_subkey(&key_path) {
-            Ok((key, _)) => {
-                let mut success = true;
-                if let Err(e) = key.set_value("CpuPriorityClass", &cpu_priority) {
-                    results.push(format!("{}:设置CPU优先级失败:{}", exe_name, e));
-                    success = false;
-                }
-                if let Err(e) = key.set_value("IoPriority", &io_priority) {
-                    results.push(format!("{}:设置I/O优先级失败:{}", exe_name, e));
-                    success = false;
-                }
-                if success {
-                    results.push(format!(
-                        "{}:设置成功(CPU:{},I/O:{})",
-                        exe_name, cpu_priority, io_priority
-                    ));
-                }
-            }
-            Err(e) => {
-                results.push(format!("{}:创建注册表项失败:{}", exe_name, e));
-            }
-        }
-    }
-
-    Ok(results.join("\n"))
+#[tauri::command]
+async fn raise_calabiyau_priority() -> Result<String, String> {
+    if !is_elevated() { return Err("需要管理员权限才能修改注册表".to_string()); }
+    set_game_registry_priority("Calabiyau-Win64-Shipping.exe", 3, 3)
 }
 
 #[tauri::command]
@@ -1644,25 +1141,7 @@ async fn check_registry_priority() -> Result<String, String> {
 
     let mut results = Vec::new();
 
-    let exe_names = vec![
-        "DeltaForceClient-Win64-Shipping.exe",
-        "SGuard64.exe",
-        "SGuardSvc64.exe",
-        "VALORANT-Win64-Shipping.exe",
-        "League of Legends.exe",
-        "ABInfinite-Win64-Shipping.exe",
-        "discovery.exe",
-        "NZFuture-Win64-Shipping.exe",
-        "crossfire.exe",
-        "DNF.exe",
-        "NRC-Win64-Shipping.exe",
-        "Client-Win64-Shipping.exe",
-        "PathOfExileSteam.exe",
-        "TheDivision2.exe",
-        "Endfield.exe",
-    ];
-
-    for exe_name in exe_names {
+    for exe_name in ALL_MONITORED_EXE_NAMES {
         let key_path = format!(r"{}\{}\PerfOptions", base_path, exe_name);
 
         match hklm.open_subkey(&key_path) {
@@ -1702,25 +1181,7 @@ async fn reset_registry_priority() -> Result<String, String> {
 
     let mut results = Vec::new();
 
-    let exe_names = vec![
-        "DeltaForceClient-Win64-Shipping.exe",
-        "SGuard64.exe",
-        "SGuardSvc64.exe",
-        "VALORANT-Win64-Shipping.exe",
-        "League of Legends.exe",
-        "ABInfinite-Win64-Shipping.exe",
-        "discovery.exe",
-        "NZFuture-Win64-Shipping.exe",
-        "crossfire.exe",
-        "DNF.exe",
-        "NRC-Win64-Shipping.exe",
-        "Client-Win64-Shipping.exe",
-        "PathOfExileSteam.exe",
-        "TheDivision2.exe",
-        "Endfield.exe",
-    ];
-
-    for exe_name in exe_names {
+    for exe_name in ALL_MONITORED_EXE_NAMES {
         let exe_key_path = format!(r"{}\{}", base_path, exe_name);
 
         match hklm.open_subkey_with_flags(&exe_key_path, KEY_WRITE) {
@@ -2052,8 +1513,6 @@ pub fn run() {
             raise_nzfuture_priority,
             check_registry_priority,
             reset_registry_priority,
-            check_game_processes,
-            set_game_process_priority,
             save_report_to_desktop,
             raise_crossfire_priority,
             raise_dnf_priority,
@@ -2062,6 +1521,7 @@ pub fn run() {
             raise_poe2_priority,
             raise_division2_priority,
             raise_endfield_priority,
+            raise_calabiyau_priority,
             get_memory_clean_status,
             clean_memory_and_temp,
 
