@@ -1,9 +1,11 @@
 # FuckACE
-## FuckACE是一个用来优化所有使用ACE的游戏的免安装软件，可以全自动限制ACE占用，以降低ACE对电脑的性能影响。
+## FuckACE是一个用来优化所有使用ACE的游戏的免费开源免安装工具，可以全自动限制ACE占用，以降低ACE对电脑的性能影响。
 ### 喜欢的话请点点star，谢谢！Ciallo～(∠・ω<)⌒☆
 
 最新版本下载：
-- [下载最新版本](https://mikugame.net/modpacks)
+- [迅雷下载](https://pan.xunlei.com/s/VOlRy4qvhrn151DGQ_Y4AUrxA1?pwd=udua#)
+- [夸克下载](https://pan.quark.cn/s/e8924b638b81)
+- [Github下载](https://github.com/shshouse/FuckACE/releases)
   
 相关使用教程请看B站视频：
 - [FuckACE使用教程](https://www.bilibili.com/video/BV1ePCnBpEWp/)
@@ -18,7 +20,7 @@
 - FuckACE不会关闭ACE，只是对其占用进行限制，别开挂嗷。
 ### 2.会不会封号
 - FuckACE虽然名字很糙，但是并不会做出任何修改游戏文件、读写游戏内存等任何危害游戏本体的行为，对ACE进程的限制也仅限于调整ACE进程的系统资源分配属性，以及通过Windows注册表预设进程优先级，但是TX是自由的，在使用时请低调，不要跳脸官方。
-- 主包测试是没事的，但是不排除会误封的可能，请充分了解潜在风险，使用即代表已经了解并接受这些风险/(ㄒoㄒ)/~~
+- 经过小半年的主包自己测试和大家的反馈，目前可以大致认为FuckACE不会导致账号封禁。但是不排除会误封的可能，请充分了解潜在风险，使用即代表已经了解并接受这些风险/(ㄒoㄒ)/~~
 
 
 ## 核心机制
