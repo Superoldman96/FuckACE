@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use sysinfo::{Pid, ProcessesToUpdate, System};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Manager, State, WindowEvent};
+use tauri::{AppHandle, Manager, State, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use winreg::enums::*;
 use winreg::RegKey;
 
@@ -1019,6 +1019,52 @@ async fn get_process_performance() -> Vec<ProcessPerformance> {
     performances
 }
 
+// 宿主窗口保住事件循环：tao在窗口集合为空时自动退出进程（→托盘消失）。
+// main 窗口不写在配置里（避免自建的 label=main 和重建的撞名），整个 WebviewWindow 按需创建。
+fn show_main_window(app: &AppHandle) {
+    if app.get_webview_window("main").is_none() {
+        eprintln!("[窗口] main 不存在，准备重建");
+        if let Err(e) = create_main_window(app) {
+            eprintln!("[窗口] 重建 main 失败: {e}");
+            return;
+        }
+    }
+    let Some(window) = app.get_webview_window("main") else {
+        eprintln!("[窗口] 重建后仍找不到 main");
+        return;
+    };
+    if let Err(e) = window.unminimize() {
+        eprintln!("[窗口] unminimize 失败: {e}");
+    }
+    if let Err(e) = window.show() {
+        eprintln!("[窗口] show 失败: {e}");
+        return;
+    }
+    if let Err(e) = window.set_focus() {
+        eprintln!("[窗口] set_focus 失败: {e}");
+    }
+}
+
+// destroy不触发CloseRequested，连窗口带webview渲染进程一起干掉。host窗口保底事件循环不退出。
+fn hide_main_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.destroy();
+    }
+}
+
+// 需要 tauri 的 unstable feature（WebviewWindowBuilder 被门控）
+fn create_main_window(app: &AppHandle) -> tauri::Result<()> {
+    let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+        .title("FuckACE")
+        .inner_size(900.0, 800.0)
+        .resizable(true)
+        .visible(false)
+        .build()?;
+    eprintln!("[窗口] 已重建 main WebviewWindow");
+    let _ = window;
+    Ok(())
+}
+
 fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     let show = MenuItem::with_id(app, "show", "显示窗口", true, None::<&str>)?;
     let hide = MenuItem::with_id(app, "hide", "隐藏到托盘", true, None::<&str>)?;
@@ -1045,27 +1091,13 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
                 button: tauri::tray::MouseButton::Left,
                 ..
             } => {
-                let app = tray.app_handle();
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.unminimize();
-                    let _ = window.set_always_on_top(true);
-                    let _ = window.set_focus();
-                    let _ = window.set_always_on_top(false);
-                }
+                show_main_window(tray.app_handle());
             }
             TrayIconEvent::DoubleClick {
                 button: tauri::tray::MouseButton::Left,
                 ..
             } => {
-                let app = tray.app_handle();
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.unminimize();
-                    let _ = window.set_always_on_top(true);
-                    let _ = window.set_focus();
-                    let _ = window.set_always_on_top(false);
-                }
+                show_main_window(tray.app_handle());
             }
             _ => {}
         })
@@ -1074,18 +1106,10 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
                 std::process::exit(0);
             }
             "show" => {
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.unminimize();
-                    let _ = window.set_always_on_top(true);
-                    let _ = window.set_focus();
-                    let _ = window.set_always_on_top(false);
-                }
+                show_main_window(app);
             }
             "hide" => {
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.hide();
-                }
+                hide_main_window(app);
             }
             _ => {}
         })
@@ -1096,10 +1120,8 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
 
 #[tauri::command]
 async fn show_close_dialog(app_handle: AppHandle) -> Result<String, String> {
-    //最小化到托盘＞﹏＜
-    if let Some(window) = app_handle.get_webview_window("main") {
-        window.hide().unwrap();
-    }
+    //最小化到托盘＞﹏＜(隐藏窗口+暂停渲染)
+    hide_main_window(&app_handle);
     Ok("已最小化到托盘".to_string())
 }
 
@@ -1570,15 +1592,54 @@ fn get_desktop_path() -> Result<std::path::PathBuf, String> {
     Err("无法获取桌面路径".to_string())
 }
 
+// 版本号比较，与前端 services/api.ts 的 compareVersions 一致
+fn compare_versions(v1: &str, v2: &str) -> std::cmp::Ordering {
+    let p1: Vec<i64> = v1.split('.').map(|s| s.parse().unwrap_or(0)).collect();
+    let p2: Vec<i64> = v2.split('.').map(|s| s.parse().unwrap_or(0)).collect();
+    let len = p1.len().max(p2.len());
+    for i in 0..len {
+        let a = p1.get(i).copied().unwrap_or(0);
+        let b = p2.get(i).copied().unwrap_or(0);
+        match a.cmp(&b) {
+            std::cmp::Ordering::Equal => continue,
+            other => return other,
+        }
+    }
+    std::cmp::Ordering::Equal
+}
+
+// 后端更新检测：自启动时前端不运行，由 Rust 后台查 Supabase，有更新则建窗显示。
+// 配置来自编译期注入（与前端 VITE_* 同源），未配置则跳过。
+fn spawn_update_check(app: &AppHandle) {
+    let api_url = env!("VITE_API_URL");
+    let api_key = env!("VITE_API_KEY");
+    let current = env!("APP_VERSION");
+    if api_url.is_empty() || api_key.is_empty() {
+        return;
+    }
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let url = format!("{api_url}/rest/v1/app_versions?order=created_at.desc&limit=1&select=version");
+        let resp = ureq::get(&url)
+            .header("apikey", api_key)
+            .header("Authorization", format!("Bearer {api_key}"))
+            .header("Accept", "application/json")
+            .call();
+        let Ok(resp) = resp else { return };
+        let Ok(versions) = resp.into_body().read_json::<Vec<serde_json::Value>>() else { return };
+        let Some(latest) = versions.first().and_then(|v| v["version"].as_str()) else { return };
+        if compare_versions(latest, current) == std::cmp::Ordering::Greater {
+            eprintln!("[更新检测] 发现新版本 v{latest}（当前 v{current}），显示窗口");
+            show_main_window(&app);
+        }
+    });
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.show();
-                let _ = window.unminimize();
-                let _ = window.set_focus();
-            }
+            show_main_window(app);
         }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
@@ -1591,16 +1652,17 @@ pub fn run() {
             let args: Vec<String> = std::env::args().collect();
             let is_autostart = args.iter().any(|a| a == "--autostart");
             if !is_autostart {
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                }
+                show_main_window(app.handle());
+            } else {
+                // 自启动时窗口/webview不创建，前端不跑，更新检测由后端后台执行
+                spawn_update_check(app.handle());
             }
             Ok(())
         })
         .on_window_event(|window, event| match event {
             WindowEvent::CloseRequested { api, .. } => {
                 api.prevent_close();
-                let _ = window.hide();
+                hide_main_window(window.app_handle());
             }
             _ => {}
         })

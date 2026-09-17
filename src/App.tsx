@@ -460,9 +460,11 @@ function App() {
   }, [autoMemoryCleanThreshold, memoryStatus, cleaning, addLog, performCleanup]);
 
   useEffect(() => {
-    if (hasUpdate) {
-      setShowUpdateDialog(true);
-    }
+    if (!hasUpdate) return;
+    setShowUpdateDialog(true);
+    // 自启动时窗口收在托盘，用户看不到弹窗：把窗口提到前台
+    void getCurrentWindow().show().catch(() => {});
+    void getCurrentWindow().setFocus().catch(() => {});
   }, [hasUpdate]);
 
   const handleSettingChange = useCallback((key: RestrictionSettingKey, checked: boolean) => {
