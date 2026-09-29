@@ -513,7 +513,7 @@ function App() {
   return (
     <ThemeProvider theme={currentTheme}>
       <CssBaseline />
-      <Container maxWidth="lg" sx={{ py: 1, height: '100vh', display: 'flex', flexDirection: 'column' }}>
+      <Container maxWidth="lg" sx={{ py: 1, minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
         <AppHeader
           appVersion={APP_VERSION}
           announcementCount={announcements.length}
@@ -530,7 +530,7 @@ function App() {
           onToggleTheme={toggleDarkMode}
         />
 
-        <Box display="flex" flexDirection="column" gap={1} sx={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+        <Box display="flex" flexDirection="column" gap={1} sx={{ flex: 1, minHeight: 0 }}>
           <Box display="flex" gap={1}>
             <PerformancePanel
               history={displayedHistory}
